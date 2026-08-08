@@ -396,7 +396,8 @@ def init_db() -> None:
             """
         )
 
-        # Backfill product_kind from name keywords for rows still empty
+        # Backfill product_kind from name keywords for rows still empty;
+        # also fix prior mis-label 挂件 → 玩偶 when name matches plush keywords.
         from app.product_kind import ProductKindNormalizer
         from app.settings import get_settings
 
@@ -411,6 +412,20 @@ def init_db() -> None:
         for row in empty_rows:
             kind = detector.detect(row["name"] or "")
             if kind:
+                conn.execute(
+                    "UPDATE items SET product_kind = ? WHERE id = ?",
+                    (kind, row["id"]),
+                )
+        mislabeled = conn.execute(
+            """
+            SELECT id, name FROM items
+            WHERE product_kind = '挂件'
+              AND IFNULL(TRIM(name), '') != ''
+            """
+        ).fetchall()
+        for row in mislabeled:
+            kind = detector.detect(row["name"] or "")
+            if kind == "玩偶":
                 conn.execute(
                     "UPDATE items SET product_kind = ? WHERE id = ?",
                     (kind, row["id"]),

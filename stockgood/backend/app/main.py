@@ -80,7 +80,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
 app = FastAPI(
     title="Stockgood API",
-    version="0.5.1",
+    version="0.5.2",
     description="库存管理接口：订单 → 进库 → 出库 → 签收。支持顾客申请、抓取导入与影子库测试。",
     lifespan=lifespan,
     openapi_tags=OPENAPI_TAGS,

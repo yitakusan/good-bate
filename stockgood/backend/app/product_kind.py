@@ -85,14 +85,19 @@ DEFAULT_KINDS: dict[str, list[str]] = {
         "クリアｶｰﾄﾞ",
         "clear card",
     ],
-    "挂件": [
-        "挂件",
-        "掛件",
+    "玩偶": [
+        "玩偶",
         "ぬいぐるみ",
         "ぬい",
         "マスコット",
         "ﾌﾟﾗｯｼｭ",
         "plush",
+        "ぬいぐるみマスコット",
+        "ぬいマス",
+    ],
+    "挂件": [
+        "挂件",
+        "掛件",
         "マスコットホルダー",
     ],
     "文件袋": [
@@ -156,10 +161,15 @@ def ensure_kind_file(path: Path) -> None:
 
 
 def _merge_defaults(raw: dict[str, list[str]]) -> dict[str, list[str]]:
-    """Keep user kinds/aliases; union in built-in JP/CN aliases for upgrades."""
+    """Keep user kinds; union built-in aliases. Built-in aliases own their kind (upgrade moves)."""
     merged: dict[str, list[str]] = {
         str(kind): [str(a) for a in aliases] for kind, aliases in raw.items()
     }
+    owned: dict[str, str] = {}
+    for kind, aliases in DEFAULT_KINDS.items():
+        for alias in [kind, *aliases]:
+            owned[alias.casefold()] = kind
+
     for kind, aliases in DEFAULT_KINDS.items():
         existing = merged.setdefault(kind, [])
         seen = {a.casefold() for a in existing}
@@ -167,6 +177,15 @@ def _merge_defaults(raw: dict[str, list[str]]) -> dict[str, list[str]]:
             if alias.casefold() not in seen:
                 existing.append(alias)
                 seen.add(alias.casefold())
+
+    # Drop built-in aliases that now belong to another standard kind
+    for kind, aliases in list(merged.items()):
+        kept: list[str] = []
+        for alias in aliases:
+            owner = owned.get(alias.casefold())
+            if owner is None or owner == kind:
+                kept.append(alias)
+        merged[kind] = kept
     return merged
 
 
