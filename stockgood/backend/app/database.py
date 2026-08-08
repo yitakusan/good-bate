@@ -242,7 +242,9 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 box_no INTEGER NOT NULL UNIQUE,
                 note TEXT NOT NULL DEFAULT '',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                parent_id INTEGER,
+                FOREIGN KEY (parent_id) REFERENCES stock_boxes(id) ON DELETE SET NULL
             );
 
             CREATE TABLE IF NOT EXISTS stock_box_orders (
@@ -333,6 +335,7 @@ def init_db() -> None:
         _ensure_column(conn, "items", "order_id", "INTEGER")
         _ensure_column(conn, "orders", "shipping_fee", "REAL")
         _ensure_column(conn, "orders", "exchange_rate", "REAL")
+        _ensure_column(conn, "stock_boxes", "parent_id", "INTEGER")
         _ensure_column(conn, "outbound_batches", "goods_jpy", "REAL")
         _ensure_column(conn, "outbound_batches", "order_shipping_jpy", "REAL")
         _ensure_column(conn, "outbound_batches", "goods_receivable_cny", "REAL")

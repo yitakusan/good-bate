@@ -25,6 +25,7 @@ import {
   createOrderInbound,
   createOutboundBatch,
   deleteStockBox,
+  detachStockBoxChild,
   downloadOutboundFeeDetail,
   fetchActionLogs,
   fetchFinanceSummary,
@@ -42,6 +43,7 @@ import {
   startTunnel,
   stopTunnel,
   getAdminToken,
+  mergeStockBoxChild,
   rejectOrderRequest,
   removeStockBoxOrders,
   scrapeUrl,
@@ -285,6 +287,8 @@ export default function App() {
   >([]);
   const [stockBoxes, setStockBoxes] = useState<StockBox[]>([]);
   const [inventoryBoxFilter, setInventoryBoxFilter] = useState<string>("all");
+  const [inventoryQ, setInventoryQ] = useState("");
+  const [mergeParentBoxId, setMergeParentBoxId] = useState("");
   const [stockBoxNoteDraft, setStockBoxNoteDraft] = useState("");
   const [selectedInventoryOrderIds, setSelectedInventoryOrderIds] = useState<
     number[]
@@ -992,15 +996,41 @@ export default function App() {
   }
 
   async function onCombineInventoryOrders() {
+    const note = stockBoxNoteDraft.trim();
+    const viewingBoxId = Number(inventoryBoxFilter);
+    const viewingBox =
+      inventoryBoxFilter !== "all" &&
+      inventoryBoxFilter !== "unboxed" &&
+      Number.isFinite(viewingBoxId) &&
+      viewingBoxId > 0
+        ? viewingBoxId
+        : null;
+
+    // No new orders: if viewing a box, just save its note
     if (selectedInventoryOrderIds.length < 1) {
+      if (viewingBox != null) {
+        try {
+          const box = await updateStockBox(viewingBox, { note });
+          setMessage(`已更新库存箱 #${box.box_no} 备注`);
+          setStockBoxes(await fetchStockBoxes());
+          setStockBoxNoteDraft(box.note || "");
+        } catch (err) {
+          setError(errorText(err));
+        }
+        return;
+      }
       setError("请先勾选要合箱的在库订单");
       return;
     }
     try {
-      const box = await combineStockBox({ order_ids: selectedInventoryOrderIds });
+      const box = await combineStockBox({
+        order_ids: selectedInventoryOrderIds,
+        note,
+      });
       setSelectedInventoryOrderIds([]);
       setMessage(
-        `已合箱：库存箱 #${box.box_no}（${box.order_count} 单 / ${box.item_count} 行）`,
+        `已合箱：库存箱 #${box.box_no}（${box.order_count} 单 / ${box.item_count} 行）`
+          + (note ? ` · 备注已保存` : ""),
       );
       setStockBoxes(await fetchStockBoxes());
       setInventoryBoxFilter(String(box.id));
@@ -1035,29 +1065,59 @@ export default function App() {
     }
   }
 
-  async function onSaveStockBoxNote() {
-    const boxId = Number(inventoryBoxFilter);
-    if (!Number.isFinite(boxId) || boxId < 1) {
-      setError("请先在下拉列表选择库存箱");
-      return;
-    }
-    try {
-      const box = await updateStockBox(boxId, { note: stockBoxNoteDraft });
-      setMessage(`已更新库存箱 #${box.box_no} 备注`);
-      setStockBoxes(await fetchStockBoxes());
-    } catch (err) {
-      setError(errorText(err));
-    }
-  }
-
   function onInventoryBoxFilterChange(value: string) {
     setInventoryBoxFilter(value);
+    setMergeParentBoxId("");
     if (value === "all" || value === "unboxed") {
       setStockBoxNoteDraft("");
       return;
     }
     const box = stockBoxes.find((b) => String(b.id) === value);
     setStockBoxNoteDraft(box?.note || "");
+  }
+
+  async function onMergeChildIntoMain() {
+    if (!selectedInventoryBox) {
+      setError("请先在箱号筛选中选中要作为子箱的 B 箱");
+      return;
+    }
+    if (selectedInventoryBox.parent_id != null) {
+      setError("当前箱已是子箱，请先拆出后再并入其他主箱");
+      return;
+    }
+    if ((selectedInventoryBox.child_boxes?.length ?? 0) > 0) {
+      setError("当前箱下还有子箱，不能再作为子箱并入主箱");
+      return;
+    }
+    const parentId = Number(mergeParentBoxId);
+    if (!Number.isFinite(parentId) || parentId < 1) {
+      setError("请选择要并入的主箱 A");
+      return;
+    }
+    try {
+      const childId = selectedInventoryBox.id;
+      const childNo = selectedInventoryBox.box_no;
+      const parent = await mergeStockBoxChild(parentId, childId);
+      setMessage(`已将箱 #${childNo} 作为子箱并入主箱 #${parent.box_no}`);
+      setMergeParentBoxId("");
+      const refreshed = await fetchStockBoxes();
+      setStockBoxes(refreshed);
+      setInventoryBoxFilter(String(childId));
+      const current = refreshed.find((b) => b.id === childId);
+      setStockBoxNoteDraft(current?.note || "");
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onDetachChildBox(childId: number) {
+    try {
+      const box = await detachStockBoxChild(childId);
+      setMessage(`已拆出子箱 #${box.box_no}，现为独立箱`);
+      setStockBoxes(await fetchStockBoxes());
+    } catch (err) {
+      setError(errorText(err));
+    }
   }
 
   function applyStockBoxSuggestions() {
@@ -1454,16 +1514,56 @@ export default function App() {
   }
 
   const filteredInventoryGroups = useMemo(() => {
-    const groups = groupLines(stockLines);
-    if (inventoryBoxFilter === "all") return groups;
+    let groups = groupLines(stockLines);
     if (inventoryBoxFilter === "unboxed") {
-      return groups.filter(([orderId]) => !stockBoxByOrderId.has(orderId));
+      groups = groups.filter(([orderId]) => !stockBoxByOrderId.has(orderId));
+    } else if (inventoryBoxFilter !== "all") {
+      const boxId = Number(inventoryBoxFilter);
+      const selectedBox = stockBoxes.find((b) => b.id === boxId);
+      const childIds = new Set(
+        (selectedBox?.child_boxes || []).map((c) => c.id),
+      );
+      groups = groups.filter(([orderId]) => {
+        const box = stockBoxByOrderId.get(orderId);
+        if (!box) return false;
+        return box.id === boxId || childIds.has(box.id);
+      });
     }
-    const boxId = Number(inventoryBoxFilter);
-    return groups.filter(
-      ([orderId]) => stockBoxByOrderId.get(orderId)?.id === boxId,
-    );
-  }, [stockLines, inventoryBoxFilter, stockBoxByOrderId]);
+    const q = inventoryQ.trim().toLowerCase();
+    if (!q) return groups;
+    return groups.filter(([orderId, group]) => {
+      const box = stockBoxByOrderId.get(orderId);
+      const boxHay = box
+        ? [
+            box.box_no,
+            box.note || "",
+            `#${box.id}`,
+            box.parent_box_no != null ? `主箱 ${box.parent_box_no}` : "",
+            box.parent_id == null && (box.child_boxes?.length ?? 0) > 0
+              ? "主箱"
+              : "",
+            ...(box.child_boxes || []).map((c) => `#${c.box_no} ${c.note}`),
+          ].join(" ")
+        : "未合箱";
+      if (boxHay.toLowerCase().includes(q)) return true;
+      if (group.orderRef.toLowerCase().includes(q)) return true;
+      return group.lines.some((line) => {
+        const hay = [
+          line.shop,
+          line.ip,
+          line.name,
+          line.order_ref,
+          line.barcode,
+          line.note,
+          line.source_url,
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        return hay.includes(q);
+      });
+    });
+  }, [stockLines, inventoryBoxFilter, stockBoxByOrderId, inventoryQ, stockBoxes]);
 
   const selectedInventoryBox = useMemo(() => {
     if (inventoryBoxFilter === "all" || inventoryBoxFilter === "unboxed") {
@@ -2482,7 +2582,7 @@ export default function App() {
       {tab === "inventory" && (
         <section className="panel">
           <p className="muted">
-            仅显示当前在库订单。合箱只做仓库编组，不改变货品状态，也不等于出库装箱。出库前请补齐条形码。
+            仅显示当前在库订单。合箱只做仓库编组，不改变货品状态，也不等于出库装箱。可将 B 箱作为子箱并入主箱 A（订单仍留在 B）。出库前请补齐条形码。
           </p>
           {missingBarcodeLines.length > 0 && (
             <div className="warn-banner">
@@ -2496,6 +2596,15 @@ export default function App() {
           )}
           <div className="form-grid inventory-filter-row">
             <label>
+              搜索
+              <input
+                type="search"
+                value={inventoryQ}
+                placeholder="店铺 / IP / 订单号 / 品名 / 条码 / 箱号备注"
+                onChange={(e) => setInventoryQ(e.target.value)}
+              />
+            </label>
+            <label>
               箱号筛选
               <select
                 value={inventoryBoxFilter}
@@ -2505,32 +2614,19 @@ export default function App() {
                 <option value="unboxed">未合箱</option>
                 {stockBoxes.map((box) => (
                   <option key={box.id} value={String(box.id)}>
-                    #{box.box_no}
+                    {box.parent_box_no != null
+                      ? `　└ #${box.box_no}（子箱→主箱 #${box.parent_box_no}）`
+                      : `#${box.box_no}${box.child_boxes?.length ? "（主箱）" : ""}`}
                     {box.note ? ` · ${box.note}` : " · 无备注"}
-                    {`（${box.order_count} 单）`}
+                    {`（${box.order_count} 单`}
+                    {box.child_boxes?.length
+                      ? ` + ${box.child_boxes.length} 子箱`
+                      : ""}
+                    ）
                   </option>
                 ))}
               </select>
             </label>
-            {selectedInventoryBox && (
-              <label className="inventory-note-field">
-                箱子备注（箱 #{selectedInventoryBox.box_no} / ID {selectedInventoryBox.id}）
-                <span className="inventory-note-edit">
-                  <input
-                    value={stockBoxNoteDraft}
-                    placeholder="自定义备注，便于识别箱子"
-                    onChange={(e) => setStockBoxNoteDraft(e.target.value)}
-                  />
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    onClick={() => void onSaveStockBoxNote()}
-                  >
-                    保存备注
-                  </button>
-                </span>
-              </label>
-            )}
           </div>
           <div className="toolbar">
             <button
@@ -2538,8 +2634,20 @@ export default function App() {
               className="btn btn-primary"
               onClick={() => void onCombineInventoryOrders()}
             >
-              合箱（已选 {selectedInventoryOrderIds.length} 单）
+              {selectedInventoryOrderIds.length > 0
+                ? `合箱（已选 ${selectedInventoryOrderIds.length} 单）`
+                : selectedInventoryBox
+                  ? "保存备注"
+                  : "合箱"}
             </button>
+            <label className="inline-filter">
+              箱子备注
+              <input
+                value={stockBoxNoteDraft}
+                placeholder="点合箱时一并保存"
+                onChange={(e) => setStockBoxNoteDraft(e.target.value)}
+              />
+            </label>
             {selectedInventoryBox && (
               <button
                 type="button"
@@ -2549,7 +2657,145 @@ export default function App() {
                 解散当前箱
               </button>
             )}
+            <span className="muted">
+              显示 {filteredInventoryGroups.length} 单
+              {inventoryQ.trim() ? ` · 搜索「${inventoryQ.trim()}」` : ""}
+            </span>
           </div>
+          {selectedInventoryBox &&
+            selectedInventoryBox.parent_id == null &&
+            (selectedInventoryBox.child_boxes?.length ?? 0) === 0 && (
+            <div className="toolbar">
+              <span className="muted">
+                当前 B 箱 #{selectedInventoryBox.box_no}
+              </span>
+              <label className="inline-filter">
+                并入主箱
+                <select
+                  value={mergeParentBoxId}
+                  onChange={(e) => setMergeParentBoxId(e.target.value)}
+                >
+                  <option value="">选择主箱 A…</option>
+                  {stockBoxes
+                    .filter(
+                      (b) =>
+                        b.id !== selectedInventoryBox.id &&
+                        b.parent_id == null,
+                    )
+                    .map((b) => (
+                      <option key={b.id} value={String(b.id)}>
+                        #{b.box_no}
+                        {b.note ? ` · ${b.note}` : ""}
+                        {`（${b.order_count} 单`}
+                        {b.child_boxes?.length
+                          ? ` + ${b.child_boxes.length} 子箱`
+                          : ""}
+                        ）
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => void onMergeChildIntoMain()}
+              >
+                合并为子箱
+              </button>
+            </div>
+          )}
+          {selectedInventoryBox?.parent_id != null && (
+            <div className="toolbar">
+              <span className="muted">
+                当前为子箱 #{selectedInventoryBox.box_no}，隶属于主箱 #
+                {selectedInventoryBox.parent_box_no}
+              </span>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => void onDetachChildBox(selectedInventoryBox.id)}
+              >
+                从主箱拆出
+              </button>
+            </div>
+          )}
+          {selectedInventoryBox &&
+            selectedInventoryBox.parent_id == null &&
+            (selectedInventoryBox.child_boxes?.length ?? 0) > 0 && (
+            <div className="toolbar">
+              <span className="muted">
+                当前为主箱 #{selectedInventoryBox.box_no}，子箱：
+                {selectedInventoryBox.child_boxes
+                  .map((c) => `#${c.box_no}`)
+                  .join("、")}
+              </span>
+            </div>
+          )}
+          {filteredInventoryGroups.length > 0 && (
+            <div className="toolbar order-select-bar">
+              <label className="check-inline">
+                <input
+                  type="checkbox"
+                  checked={
+                    filteredInventoryGroups.length > 0 &&
+                    filteredInventoryGroups.every(([orderId]) =>
+                      selectedInventoryOrderIds.includes(orderId),
+                    )
+                  }
+                  ref={(el) => {
+                    if (!el) return;
+                    const visibleIds = filteredInventoryGroups.map(
+                      ([orderId]) => orderId,
+                    );
+                    const selectedVisible = visibleIds.filter((id) =>
+                      selectedInventoryOrderIds.includes(id),
+                    );
+                    el.indeterminate =
+                      selectedVisible.length > 0 &&
+                      selectedVisible.length < visibleIds.length;
+                  }}
+                  onChange={(e) => {
+                    const visibleIds = filteredInventoryGroups.map(
+                      ([orderId]) => orderId,
+                    );
+                    if (e.target.checked) {
+                      setSelectedInventoryOrderIds((current) => [
+                        ...new Set([...current, ...visibleIds]),
+                      ]);
+                    } else {
+                      const drop = new Set(visibleIds);
+                      setSelectedInventoryOrderIds((current) =>
+                        current.filter((id) => !drop.has(id)),
+                      );
+                    }
+                  }}
+                />
+                全选当前列表
+              </label>
+              <span className="muted">
+                列表已选{" "}
+                {
+                  filteredInventoryGroups.filter(([orderId]) =>
+                    selectedInventoryOrderIds.includes(orderId),
+                  ).length
+                }{" "}
+                / {filteredInventoryGroups.length}
+                {selectedInventoryOrderIds.length >
+                filteredInventoryGroups.filter(([orderId]) =>
+                  selectedInventoryOrderIds.includes(orderId),
+                ).length
+                  ? ` · 合计勾选 ${selectedInventoryOrderIds.length}`
+                  : ""}
+              </span>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setSelectedInventoryOrderIds([])}
+              >
+                清空勾选
+              </button>
+            </div>
+          )}
           <div className="item-pick">
             {filteredInventoryGroups.length === 0 ? (
               <div className="empty">
@@ -2565,6 +2811,28 @@ export default function App() {
                 const missingCount = group.lines.filter(
                   (line) => !(line.barcode || "").trim(),
                 ).length;
+                const shopSummary = (() => {
+                  const seen = new Set<string>();
+                  const shops: string[] = [];
+                  for (const line of group.lines) {
+                    const shop = (line.shop || "").trim();
+                    if (!shop || seen.has(shop)) continue;
+                    seen.add(shop);
+                    shops.push(shop);
+                  }
+                  return shops;
+                })();
+                const ipSummary = (() => {
+                  const seen = new Set<string>();
+                  const ips: string[] = [];
+                  for (const line of group.lines) {
+                    const ip = (line.ip || "").trim();
+                    if (!ip || seen.has(ip)) continue;
+                    seen.add(ip);
+                    ips.push(ip);
+                  }
+                  return ips;
+                })();
                 return (
                   <div className="order-sub" key={orderId}>
                     <div className="order-sub-head">
@@ -2584,6 +2852,24 @@ export default function App() {
                           {group.orderRef}
                         </button>
                         <span className="muted"> · {group.lines.length} 行</span>
+                        {shopSummary.length > 0 && (
+                          <span
+                            className="muted ellipsis inventory-meta"
+                            title={shopSummary.join(" / ")}
+                          >
+                            {" "}
+                            · {shopSummary.join(" / ")}
+                          </span>
+                        )}
+                        {ipSummary.length > 0 && (
+                          <span
+                            className="muted ellipsis inventory-meta"
+                            title={ipSummary.join(" / ")}
+                          >
+                            {" "}
+                            · IP {ipSummary.join(" / ")}
+                          </span>
+                        )}
                         {missingCount > 0 && (
                           <span className="badge warn-badge">
                             {missingCount} 件无条码
@@ -2591,7 +2877,11 @@ export default function App() {
                         )}
                         {box ? (
                           <span className="badge in_stock">
-                            库存箱 #{box.box_no}
+                            {box.parent_box_no != null
+                              ? `子箱 #${box.box_no}→主箱 #${box.parent_box_no}`
+                              : (box.child_boxes?.length ?? 0) > 0
+                                ? `主箱 #${box.box_no}`
+                                : `库存箱 #${box.box_no}`}
                             {box.note ? ` · ${box.note}` : ""}
                           </span>
                         ) : (

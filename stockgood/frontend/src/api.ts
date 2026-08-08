@@ -189,11 +189,22 @@ export interface StockBoxOrder {
   lines: StockBoxLine[];
 }
 
+export interface StockBoxChild {
+  id: number;
+  box_no: number;
+  note: string;
+  order_count: number;
+  item_count: number;
+}
+
 export interface StockBox {
   id: number;
   box_no: number;
   note: string;
   created_at: string;
+  parent_id: number | null;
+  parent_box_no: number | null;
+  child_boxes: StockBoxChild[];
   order_ids: number[];
   order_count: number;
   item_count: number;
@@ -630,6 +641,19 @@ export function removeStockBoxOrders(boxId: number, orderIds: number[]) {
 export function deleteStockBox(boxId: number) {
   return request<{ ok: boolean }>(`/api/stock-boxes/${boxId}`, {
     method: "DELETE",
+  });
+}
+
+export function mergeStockBoxChild(parentId: number, childBoxId: number) {
+  return request<StockBox>(`/api/stock-boxes/${parentId}/merge-child`, {
+    method: "POST",
+    body: JSON.stringify({ child_box_id: childBoxId }),
+  });
+}
+
+export function detachStockBoxChild(childId: number) {
+  return request<StockBox>(`/api/stock-boxes/${childId}/detach-parent`, {
+    method: "POST",
   });
 }
 

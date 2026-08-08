@@ -366,11 +366,26 @@ class StockBoxOrdersPayload(BaseModel):
     order_ids: list[int] = Field(min_length=1)
 
 
+class StockBoxMergeChild(BaseModel):
+    child_box_id: int = Field(ge=1)
+
+
+class StockBoxChildOut(BaseModel):
+    id: int
+    box_no: int
+    note: str = ""
+    order_count: int = 0
+    item_count: int = 0
+
+
 class StockBoxOut(BaseModel):
     id: int
     box_no: int
     note: str = ""
     created_at: str
+    parent_id: Optional[int] = None
+    parent_box_no: Optional[int] = None
+    child_boxes: list[StockBoxChildOut] = []
     order_ids: list[int] = []
     order_count: int = 0
     item_count: int = 0

@@ -36,6 +36,7 @@ from app.models import (
     ShipmentOut,
     StatsOut,
     StockBoxCreate,
+    StockBoxMergeChild,
     StockBoxOrdersPayload,
     StockBoxOut,
     StockBoxUpdate,
@@ -578,6 +579,34 @@ def combine_stock_box(
     return stock_boxes_svc.combine_orders(
         order_ids=payload.order_ids, note=payload.note
     )
+
+
+@app.post(
+    "/api/stock-boxes/{parent_id}/merge-child",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="将 B 箱作为子箱并入主箱 A",
+)
+def merge_stock_box_child(
+    parent_id: int,
+    payload: StockBoxMergeChild,
+    _: None = Depends(require_admin),
+) -> dict:
+    """子箱订单仍留在 B；B 挂到主箱 A 下（仅一层）。"""
+    return stock_boxes_svc.merge_child(parent_id, payload.child_box_id)
+
+
+@app.post(
+    "/api/stock-boxes/{child_id}/detach-parent",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="拆出子箱（取消主从关系）",
+)
+def detach_stock_box_child(
+    child_id: int, _: None = Depends(require_admin)
+) -> dict:
+    """子箱变为独立主箱，订单仍在该箱内。"""
+    return stock_boxes_svc.detach_child(child_id)
 
 
 @app.get(

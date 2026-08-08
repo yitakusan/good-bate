@@ -954,19 +954,10 @@ th {
   margin-bottom: 10px;
 }
 
-.inventory-note-field {
-  grid-column: 1 / -1;
-}
-
-.inventory-note-edit {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
-.inventory-note-edit input {
-  flex: 1;
-  min-width: 0;
+.inventory-meta {
+  max-width: 220px;
+  display: inline-block;
+  vertical-align: bottom;
 }
 
 .order-sub-head {

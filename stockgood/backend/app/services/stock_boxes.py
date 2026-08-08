@@ -15,7 +15,8 @@ def _now() -> str:
 def _order_in_stock_lines(conn, order_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT id, order_id, name, shop, order_ref, qty, status, image_url, barcode
+        SELECT id, order_id, name, shop, order_ref, qty, status, image_url,
+               barcode, ip, note, source_url
         FROM items
         WHERE order_id = ? AND status = 'in_stock'
         ORDER BY id
@@ -23,6 +24,23 @@ def _order_in_stock_lines(conn, order_id: int) -> list[dict[str, Any]]:
         (order_id,),
     ).fetchall()
     return [dict(r) for r in rows]
+
+
+def _box_counts(conn, box_id: int) -> tuple[int, int]:
+    row = conn.execute(
+        """
+        SELECT
+            COUNT(DISTINCT sbo.order_id) AS order_count,
+            COALESCE(SUM(
+                (SELECT COUNT(*) FROM items i
+                 WHERE i.order_id = sbo.order_id AND i.status = 'in_stock')
+            ), 0) AS item_count
+        FROM stock_box_orders sbo
+        WHERE sbo.box_id = ?
+        """,
+        (box_id,),
+    ).fetchone()
+    return int(row["order_count"] or 0), int(row["item_count"] or 0)
 
 
 def _box_out(conn, box_id: int) -> dict[str, Any]:
@@ -55,11 +73,47 @@ def _box_out(conn, box_id: int) -> dict[str, Any]:
                 "lines": lines,
             }
         )
+
+    parent_id = box["parent_id"]
+    parent_box_no = None
+    if parent_id is not None:
+        parent = conn.execute(
+            "SELECT box_no FROM stock_boxes WHERE id = ?", (int(parent_id),)
+        ).fetchone()
+        if parent:
+            parent_box_no = int(parent["box_no"])
+        else:
+            parent_id = None
+
+    children_rows = conn.execute(
+        """
+        SELECT id, box_no, note FROM stock_boxes
+        WHERE parent_id = ?
+        ORDER BY box_no, id
+        """,
+        (box_id,),
+    ).fetchall()
+    child_boxes: list[dict[str, Any]] = []
+    for child in children_rows:
+        oc, ic = _box_counts(conn, int(child["id"]))
+        child_boxes.append(
+            {
+                "id": int(child["id"]),
+                "box_no": int(child["box_no"]),
+                "note": child["note"] or "",
+                "order_count": oc,
+                "item_count": ic,
+            }
+        )
+
     return {
         "id": box["id"],
         "box_no": box["box_no"],
         "note": box["note"] or "",
         "created_at": box["created_at"],
+        "parent_id": int(parent_id) if parent_id is not None else None,
+        "parent_box_no": parent_box_no,
+        "child_boxes": child_boxes,
         "order_ids": [o["id"] for o in orders],
         "order_count": len(orders),
         "item_count": sum(o["line_count"] for o in orders),
@@ -252,7 +306,97 @@ def delete_box(box_id: int) -> None:
         ).fetchone()
         if not box:
             raise HTTPException(status_code=404, detail="stock box not found")
+        # Detach children so they become independent main boxes
+        conn.execute(
+            "UPDATE stock_boxes SET parent_id = NULL WHERE parent_id = ?",
+            (box_id,),
+        )
         conn.execute("DELETE FROM stock_boxes WHERE id = ?", (box_id,))
+
+
+def merge_child(parent_id: int, child_id: int) -> dict[str, Any]:
+    """Attach box B as a sub-box under main box A. Orders stay in B."""
+    if int(parent_id) == int(child_id):
+        raise HTTPException(status_code=400, detail="主箱与子箱不能是同一箱")
+
+    with get_conn() as conn:
+        parent = conn.execute(
+            "SELECT id, box_no, parent_id FROM stock_boxes WHERE id = ?",
+            (parent_id,),
+        ).fetchone()
+        if not parent:
+            raise HTTPException(status_code=404, detail="主箱不存在")
+        child = conn.execute(
+            "SELECT id, box_no, parent_id FROM stock_boxes WHERE id = ?",
+            (child_id,),
+        ).fetchone()
+        if not child:
+            raise HTTPException(status_code=404, detail="子箱不存在")
+
+        if parent["parent_id"] is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"箱 #{parent['box_no']} 已是子箱，不能再作为主箱。"
+                    "请选择无上级的主箱。"
+                ),
+            )
+
+        # One level only: child must not already have its own children
+        has_kids = conn.execute(
+            "SELECT id FROM stock_boxes WHERE parent_id = ? LIMIT 1",
+            (child_id,),
+        ).fetchone()
+        if has_kids:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"箱 #{child['box_no']} 下还有子箱，请先拆开后再并入主箱"
+                ),
+            )
+
+        # Prevent cycle if somehow deeper links exist later
+        walk_id: int | None = int(parent_id)
+        seen: set[int] = set()
+        while walk_id is not None:
+            if walk_id == int(child_id):
+                raise HTTPException(
+                    status_code=400, detail="不能将上级箱并入其下级"
+                )
+            if walk_id in seen:
+                break
+            seen.add(walk_id)
+            row = conn.execute(
+                "SELECT parent_id FROM stock_boxes WHERE id = ?", (walk_id,)
+            ).fetchone()
+            walk_id = int(row["parent_id"]) if row and row["parent_id"] else None
+
+        conn.execute(
+            "UPDATE stock_boxes SET parent_id = ? WHERE id = ?",
+            (parent_id, child_id),
+        )
+        return _box_out(conn, parent_id)
+
+
+def detach_child(child_id: int) -> dict[str, Any]:
+    """Detach sub-box B from its main box; B becomes an independent box."""
+    with get_conn() as conn:
+        child = conn.execute(
+            "SELECT id, box_no, parent_id FROM stock_boxes WHERE id = ?",
+            (child_id,),
+        ).fetchone()
+        if not child:
+            raise HTTPException(status_code=404, detail="库存箱不存在")
+        if child["parent_id"] is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"箱 #{child['box_no']} 不是子箱，无需拆出",
+            )
+        conn.execute(
+            "UPDATE stock_boxes SET parent_id = NULL WHERE id = ?",
+            (child_id,),
+        )
+        return _box_out(conn, child_id)
 
 
 def combine_orders(order_ids: list[int], note: str = "") -> dict[str, Any]:
@@ -274,6 +418,7 @@ def combine_orders(order_ids: list[int], note: str = "") -> dict[str, Any]:
                 if bid not in box_ids:
                     box_ids.append(bid)
 
+        note_text = (note or "").strip()
         if box_ids:
             target_id = min(box_ids)
         else:
@@ -283,15 +428,15 @@ def combine_orders(order_ids: list[int], note: str = "") -> dict[str, Any]:
                 INSERT INTO stock_boxes (box_no, note, created_at)
                 VALUES (?, ?, ?)
                 """,
-                (use_no, (note or "").strip(), _now()),
+                (use_no, note_text, _now()),
             )
             target_id = int(cur.lastrowid)
 
-        if note.strip():
-            conn.execute(
-                "UPDATE stock_boxes SET note = ? WHERE id = ?",
-                (note.strip(), target_id),
-            )
+        # Always persist note on combine (UI saves draft together with 合箱)
+        conn.execute(
+            "UPDATE stock_boxes SET note = ? WHERE id = ?",
+            (note_text, target_id),
+        )
 
         for oid in ids:
             conn.execute(
@@ -345,12 +490,21 @@ def release_orders(conn, order_ids: set[int] | list[int]) -> None:
 def order_box_map(conn) -> dict[int, dict[str, Any]]:
     rows = conn.execute(
         """
-        SELECT sbo.order_id, sb.id AS box_id, sb.box_no
+        SELECT sbo.order_id, sb.id AS box_id, sb.box_no, sb.parent_id,
+               parent.box_no AS parent_box_no
         FROM stock_box_orders sbo
         JOIN stock_boxes sb ON sb.id = sbo.box_id
+        LEFT JOIN stock_boxes parent ON parent.id = sb.parent_id
         """
     ).fetchall()
     return {
-        int(r["order_id"]): {"stock_box_id": int(r["box_id"]), "stock_box_no": int(r["box_no"])}
+        int(r["order_id"]): {
+            "stock_box_id": int(r["box_id"]),
+            "stock_box_no": int(r["box_no"]),
+            "parent_box_id": int(r["parent_id"]) if r["parent_id"] is not None else None,
+            "parent_box_no": int(r["parent_box_no"])
+            if r["parent_box_no"] is not None
+            else None,
+        }
         for r in rows
     }
