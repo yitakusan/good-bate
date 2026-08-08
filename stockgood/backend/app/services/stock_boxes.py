@@ -16,7 +16,7 @@ def _order_in_stock_lines(conn, order_id: int) -> list[dict[str, Any]]:
     rows = conn.execute(
         """
         SELECT id, order_id, name, shop, order_ref, qty, status, image_url,
-               barcode, ip, note, source_url
+               barcode, ip, product_kind, note, source_url
         FROM items
         WHERE order_id = ? AND status = 'in_stock'
         ORDER BY id

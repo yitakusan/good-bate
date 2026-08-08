@@ -8,9 +8,22 @@ from fastapi import HTTPException
 
 from app.database import get_conn
 from app.models import LineCreate, OrderCreate, OrderUpdate
+from app.product_kind import ProductKindNormalizer
 from app.services import action_log
 from app.services.order_status import sync_order_status
+from app.settings import get_settings
 from app.tracking_links import tracking_url
+
+
+def _product_kind_detector() -> ProductKindNormalizer:
+    return ProductKindNormalizer(get_settings().product_kind_path)
+
+
+def _resolve_product_kind(name: str, explicit: str = "") -> str:
+    text = (explicit or "").strip()
+    if text:
+        return text
+    return _product_kind_detector().detect(name)
 
 _EXPECTED_SHIP_RE = re.compile(r"^\d{4}-\d{2}(-\d{2})?$")
 _VALID_PERIODS = frozenset({"early", "mid", "late"})
@@ -262,17 +275,19 @@ def _insert_line(
         line.expected_ship_period, has_month=bool(expected_ship_at)
     )
     shop = (line.shop or shop_fallback or "").strip()
+    name = line.name.strip()
+    product_kind = _resolve_product_kind(name, getattr(line, "product_kind", "") or "")
     cur = conn.execute(
         """
         INSERT INTO items (
             order_id, name, shop, order_ref, qty, unit_cost, status,
             ordered_at, expected_ship_at, expected_ship_period, barcode, note,
-            animegood_product_id, ip, image_url, source_url
-        ) VALUES (?, ?, ?, ?, ?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            animegood_product_id, ip, product_kind, image_url, source_url
+        ) VALUES (?, ?, ?, ?, ?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             order_id,
-            line.name.strip(),
+            name,
             shop,
             order_ref,
             line.qty,
@@ -284,6 +299,7 @@ def _insert_line(
             line.note.strip(),
             line.animegood_product_id,
             line.ip.strip(),
+            product_kind,
             line.image_url.strip(),
             line.source_url.strip(),
         ),

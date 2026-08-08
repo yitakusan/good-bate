@@ -28,6 +28,7 @@ export interface Line {
   note: string;
   animegood_product_id: number | null;
   ip: string;
+  product_kind: string;
   image_url: string;
   source_url: string;
   inbound_tracking_no: string | null;
@@ -177,6 +178,10 @@ export interface StockBoxLine {
   status: ItemStatus;
   image_url: string;
   barcode: string;
+  ip?: string;
+  product_kind?: string;
+  note?: string;
+  source_url?: string;
 }
 
 export interface StockBoxOrder {
@@ -232,6 +237,7 @@ export interface LineCreate {
   note?: string;
   animegood_product_id?: number | null;
   ip?: string;
+  product_kind?: string;
   image_url?: string;
   source_url?: string;
   expected_ship_at?: string | null;
@@ -424,6 +430,12 @@ export function stopTunnel() {
 
 export function fetchMeta() {
   return request<AppMeta>("/api/meta");
+}
+
+export function fetchProductKinds() {
+  return request<{ labels: string[]; aliases: Record<string, string[]> }>(
+    "/api/product-kinds",
+  );
 }
 
 export function fetchStats() {

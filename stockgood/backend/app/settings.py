@@ -16,6 +16,7 @@ DbMode = Literal["production", "shadow"]
 class Settings(BaseSettings):
     app_name: str = "Stockgood"
     ip_alias_path: Path = DATA_DIR / "ip_aliases.json"
+    product_kind_path: Path = DATA_DIR / "product_kinds.json"
     # production = 实际库存；shadow = 测试影子库（采购导入等，不参与实库存）
     db_mode: DbMode = "production"
     # Optional staff write protection for order-request APIs (and UI prompt).

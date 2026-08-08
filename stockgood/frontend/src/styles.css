@@ -466,6 +466,46 @@ th {
   letter-spacing: 0.04em;
 }
 
+.kind-tag {
+  display: inline-block;
+  flex-shrink: 0;
+  margin-right: 6px;
+  padding: 1px 7px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  vertical-align: middle;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent, #2a6f6a) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent, #2a6f6a) 10%, var(--bg-row));
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+.line-name-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.line-name-cell > .ellipsis {
+  min-width: 0;
+  flex: 1;
+}
+
+.kind-select {
+  flex-shrink: 0;
+  max-width: 5.5em;
+  padding: 1px 2px;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: var(--text);
+  border: 1px solid color-mix(in srgb, var(--accent, #2a6f6a) 40%, var(--line));
+  background: color-mix(in srgb, var(--accent, #2a6f6a) 10%, var(--bg-row));
+  border-radius: 6px;
+  cursor: pointer;
+}
+
 .badge {
   display: inline-block;
   padding: 2px 8px;

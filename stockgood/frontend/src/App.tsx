@@ -35,6 +35,7 @@ import {
   fetchOrderRequests,
   fetchOrders,
   fetchOutboundBatches,
+  fetchProductKinds,
   fetchShipments,
   fetchShops,
   fetchStats,
@@ -207,6 +208,7 @@ export default function App() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [orders, setOrders] = useState<Order[]>([]);
   const [shops, setShops] = useState<string[]>([]);
+  const [productKinds, setProductKinds] = useState<string[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [stockLines, setStockLines] = useState<Line[]>([]);
   const [batches, setBatches] = useState<OutboundBatch[]>([]);
@@ -329,14 +331,16 @@ export default function App() {
   }, [stockBoxes]);
 
   async function loadChrome() {
-    const [nextStats, nextMeta, nextLog] = await Promise.all([
+    const [nextStats, nextMeta, nextLog, kinds] = await Promise.all([
       fetchStats(),
       fetchMeta(),
       fetchLatestActionLog(),
+      fetchProductKinds().catch(() => ({ labels: [] as string[], aliases: {} })),
     ]);
     setStats(nextStats);
     setMeta(nextMeta);
     setLatestLog(nextLog);
+    setProductKinds(kinds.labels || []);
   }
 
   async function loadOrders() {
@@ -1551,6 +1555,7 @@ export default function App() {
         const hay = [
           line.shop,
           line.ip,
+          line.product_kind,
           line.name,
           line.order_ref,
           line.barcode,
@@ -2069,7 +2074,11 @@ export default function App() {
                   }}
                   onBarcode={(id, barcode) => void onUpdateLine(id, { barcode })}
                   onQty={(id, qty) => void onUpdateLine(id, { qty })}
+                  onProductKind={(id, product_kind) =>
+                    void onUpdateLine(id, { product_kind })
+                  }
                   onCancelLine={(id) => void onUpdateLine(id, { status: "cancelled" })}
+                  productKinds={productKinds}
                   onShippingFee={(fee) =>
                     void updateOrder(order.id, { shipping_fee: fee })
                       .then(() => refresh())
@@ -2638,7 +2647,7 @@ export default function App() {
               <input
                 type="search"
                 value={inventoryQ}
-                placeholder="店铺 / IP / 订单号 / 品名 / 条码 / 箱号备注"
+                placeholder="店铺 / IP / 种类 / 订单号 / 品名 / 条码 / 箱号备注"
                 onChange={(e) => setInventoryQ(e.target.value)}
               />
             </label>
@@ -2971,8 +2980,22 @@ export default function App() {
                           ) : (
                             <span className="thumb-sm placeholder" />
                           )}
-                          <span className="ellipsis" title={line.name}>
-                            {line.name}
+                          <span
+                            className="line-name-cell"
+                            title={
+                              line.product_kind
+                                ? `${line.product_kind} · ${line.name}`
+                                : line.name
+                            }
+                          >
+                            <KindSelect
+                              value={line.product_kind || ""}
+                              options={productKinds}
+                              onSave={(product_kind) =>
+                                void onUpdateLine(line.id, { product_kind })
+                              }
+                            />
+                            <span className="ellipsis">{line.name}</span>
                           </span>
                           <span className="muted">x{line.qty}</span>
                           <BarcodeInput
@@ -3485,10 +3508,12 @@ function OrderCard({
   onEnsureExpanded,
   onBarcode,
   onQty,
+  onProductKind,
   onCancelLine,
   onShippingFee,
   onExchangeRate,
   onOrderRef,
+  productKinds,
 }: {
   order: Order;
   selected: boolean;
@@ -3498,10 +3523,12 @@ function OrderCard({
   onEnsureExpanded: () => void;
   onBarcode: (id: number, value: string) => void;
   onQty: (id: number, qty: number) => void;
+  onProductKind: (id: number, product_kind: string) => void;
   onCancelLine: (id: number) => void;
   onShippingFee: (fee: number | null) => void;
   onExchangeRate: (rate: number | null) => void;
   onOrderRef: (orderRef: string) => void;
+  productKinds: string[];
 }) {
   const [editing, setEditing] = useState(false);
   const [feeDraft, setFeeDraft] = useState(
@@ -3717,7 +3744,21 @@ function OrderCard({
               ) : (
                 <span className="thumb-sm placeholder" />
               )}
-              <span className="ellipsis" title={line.name}>{line.name}</span>
+              <span
+                className="line-name-cell"
+                title={
+                  line.product_kind
+                    ? `${line.product_kind} · ${line.name}`
+                    : line.name
+                }
+              >
+                <KindSelect
+                  value={line.product_kind || ""}
+                  options={productKinds}
+                  onSave={(product_kind) => onProductKind(line.id, product_kind)}
+                />
+                <span className="ellipsis">{line.name}</span>
+              </span>
               {editing ? (
                 <QtyInput value={line.qty} onSave={(qty) => onQty(line.id, qty)} />
               ) : (
@@ -3769,6 +3810,42 @@ function CarrierSelect({
         <option value="other">其他</option>
       </select>
     </label>
+  );
+}
+
+function KindSelect({
+  value,
+  options,
+  onSave,
+}: {
+  value: string;
+  options: string[];
+  onSave: (kind: string) => void;
+}) {
+  const choices = useMemo(() => {
+    const set = new Set(options);
+    if (value && !set.has(value)) set.add(value);
+    return Array.from(set);
+  }, [options, value]);
+
+  return (
+    <select
+      className="kind-select"
+      title="商品种类"
+      value={value}
+      onClick={(e) => e.stopPropagation()}
+      onChange={(e) => {
+        const next = e.target.value;
+        if (next !== value) onSave(next);
+      }}
+    >
+      <option value="">种类</option>
+      {choices.map((kind) => (
+        <option key={kind} value={kind}>
+          {kind}
+        </option>
+      ))}
+    </select>
   );
 }
 

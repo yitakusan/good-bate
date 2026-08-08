@@ -214,6 +214,7 @@ def init_db() -> None:
                 note TEXT NOT NULL DEFAULT '',
                 animegood_product_id INTEGER,
                 ip TEXT NOT NULL DEFAULT '',
+                product_kind TEXT NOT NULL DEFAULT '',
                 image_url TEXT NOT NULL DEFAULT '',
                 source_url TEXT NOT NULL DEFAULT '',
                 order_qty INTEGER,
@@ -327,6 +328,7 @@ def init_db() -> None:
         _ensure_column(conn, "items", "source_url", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "items", "image_url", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "items", "ip", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "items", "product_kind", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "items", "expected_ship_at", "TEXT")
         _ensure_column(conn, "items", "expected_ship_period", "TEXT")
         _ensure_column(conn, "items", "barcode", "TEXT NOT NULL DEFAULT ''")
@@ -392,6 +394,29 @@ def init_db() -> None:
             SET carrier = 'other'
             WHERE carrier IS NULL OR carrier NOT IN ('yamato', 'sagawa', 'other')
             """
+        )
+
+        # Backfill product_kind from name keywords for rows still empty
+        from app.product_kind import ProductKindNormalizer
+        from app.settings import get_settings
+
+        detector = ProductKindNormalizer(get_settings().product_kind_path)
+        empty_rows = conn.execute(
+            """
+            SELECT id, name FROM items
+            WHERE IFNULL(TRIM(product_kind), '') = ''
+              AND IFNULL(TRIM(name), '') != ''
+            """
+        ).fetchall()
+        for row in empty_rows:
+            kind = detector.detect(row["name"] or "")
+            if kind:
+                conn.execute(
+                    "UPDATE items SET product_kind = ? WHERE id = ?",
+                    (kind, row["id"]),
+                )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_items_product_kind ON items(product_kind)"
         )
 
 

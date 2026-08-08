@@ -28,6 +28,7 @@ class LineCreate(BaseModel):
     note: str = ""
     animegood_product_id: Optional[int] = None
     ip: str = ""
+    product_kind: str = ""
     image_url: str = ""
     source_url: str = ""
     expected_ship_at: Optional[str] = None
@@ -52,6 +53,7 @@ class LineOut(BaseModel):
     note: str
     animegood_product_id: Optional[int]
     ip: str
+    product_kind: str = ""
     image_url: str
     source_url: str = ""
     inbound_tracking_no: Optional[str] = None
@@ -125,6 +127,7 @@ class ItemCreate(BaseModel):
     note: str = ""
     animegood_product_id: Optional[int] = None
     ip: str = ""
+    product_kind: str = ""
     image_url: str = ""
     source_url: str = ""
     expected_ship_at: Optional[str] = None
@@ -144,6 +147,7 @@ class ItemUpdate(BaseModel):
     status: Optional[ItemStatus] = None
     animegood_product_id: Optional[int] = None
     ip: Optional[str] = None
+    product_kind: Optional[str] = None
     image_url: Optional[str] = None
     source_url: Optional[str] = None
     expected_ship_at: Optional[str] = None
@@ -339,6 +343,10 @@ class StockBoxLineOut(BaseModel):
     status: ItemStatus
     image_url: str = ""
     barcode: str = ""
+    ip: str = ""
+    product_kind: str = ""
+    note: str = ""
+    source_url: str = ""
 
 
 class StockBoxOrderOut(BaseModel):

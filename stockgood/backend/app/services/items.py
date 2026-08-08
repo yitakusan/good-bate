@@ -15,6 +15,7 @@ from app.services.orders import (
     _insert_line,
     _normalize_expected_period,
     _normalize_expected_ship,
+    _resolve_product_kind,
 )
 
 
@@ -39,10 +40,11 @@ def list_items(
     if q:
         clauses.append(
             "(i.name LIKE ? OR i.shop LIKE ? OR i.order_ref LIKE ? OR i.note LIKE ?"
-            " OR i.ip LIKE ? OR i.source_url LIKE ? OR i.barcode LIKE ?)"
+            " OR i.ip LIKE ? OR i.product_kind LIKE ? OR i.source_url LIKE ?"
+            " OR i.barcode LIKE ?)"
         )
         like = f"%{q}%"
-        params.extend([like, like, like, like, like, like, like])
+        params.extend([like, like, like, like, like, like, like, like])
     if expected_ship_month:
         month = _normalize_expected_ship(expected_ship_month)
         if not month:
@@ -268,6 +270,12 @@ def update_item(item_id: int, payload: ItemUpdate) -> dict[str, Any]:
         )
 
     data.pop("order_ref", None)
+
+    # If name changes and kind not explicitly set, re-detect from new name
+    if "name" in data and "product_kind" not in data:
+        data["product_kind"] = _resolve_product_kind(str(data["name"]), "")
+    elif "product_kind" in data and data["product_kind"] is not None:
+        data["product_kind"] = str(data["product_kind"]).strip()
 
     fields = []
     params: list[Any] = []
