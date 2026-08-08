@@ -633,6 +633,13 @@ export function combineStockBox(payload: {
   });
 }
 
+export function addStockBoxOrders(boxId: number, orderIds: number[]) {
+  return request<StockBox>(`/api/stock-boxes/${boxId}/orders`, {
+    method: "POST",
+    body: JSON.stringify({ order_ids: orderIds }),
+  });
+}
+
 export function updateStockBox(
   boxId: number,
   payload: { note?: string; box_no?: number },

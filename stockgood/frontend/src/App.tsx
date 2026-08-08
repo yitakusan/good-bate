@@ -27,6 +27,7 @@ import {
   deleteStockBox,
   detachStockBoxChild,
   downloadOutboundFeeDetail,
+  addStockBoxOrders,
   fetchActionLogs,
   fetchFinanceSummary,
   fetchItems,
@@ -291,6 +292,7 @@ export default function App() {
   const [inventoryBoxFilter, setInventoryBoxFilter] = useState<string>("all");
   const [inventoryQ, setInventoryQ] = useState("");
   const [mergeParentBoxId, setMergeParentBoxId] = useState("");
+  const [addToBoxId, setAddToBoxId] = useState("");
   const [stockBoxNoteDraft, setStockBoxNoteDraft] = useState("");
   const [selectedInventoryOrderIds, setSelectedInventoryOrderIds] = useState<
     number[]
@@ -1009,6 +1011,9 @@ export default function App() {
       viewingBoxId > 0
         ? viewingBoxId
         : null;
+    const targetBoxId = Number(addToBoxId);
+    const hasTarget =
+      Number.isFinite(targetBoxId) && targetBoxId > 0 && Boolean(addToBoxId);
 
     // No new orders: if viewing a box, just save its note
     if (selectedInventoryOrderIds.length < 1) {
@@ -1026,19 +1031,52 @@ export default function App() {
       setError("请先勾选要合箱的在库订单");
       return;
     }
+
     try {
+      // Target box selected → add free orders into that box
+      if (hasTarget) {
+        const freeIds = selectedInventoryOrderIds.filter(
+          (oid) => !stockBoxByOrderId.has(oid),
+        );
+        if (freeIds.length < 1) {
+          setError("所选订单均已合箱；请勾选未合箱订单，或先移出后再加入");
+          return;
+        }
+        let box = await addStockBoxOrders(targetBoxId, freeIds);
+        if (note) {
+          box = await updateStockBox(box.id, { note });
+        }
+        const skipped = selectedInventoryOrderIds.length - freeIds.length;
+        setSelectedInventoryOrderIds([]);
+        setAddToBoxId("");
+        setMessage(
+          `已合入库存箱 #${box.box_no}：${freeIds.length} 单`
+            + (skipped > 0 ? `（跳过 ${skipped} 单已合箱）` : "")
+            + ` · 现 ${box.order_count} 单 / ${box.item_count} 行`
+            + (note ? " · 备注已保存" : ""),
+        );
+        setStockBoxes(await fetchStockBoxes());
+        if (inventoryBoxFilter === String(box.id)) {
+          setStockBoxNoteDraft(box.note || "");
+        }
+        return;
+      }
+
+      // No target → create / combine into a new shared box
       const box = await combineStockBox({
         order_ids: selectedInventoryOrderIds,
         note,
       });
       setSelectedInventoryOrderIds([]);
+      setAddToBoxId("");
       setMessage(
         `已合箱：库存箱 #${box.box_no}（${box.order_count} 单 / ${box.item_count} 行）`
           + (note ? ` · 备注已保存` : ""),
       );
       setStockBoxes(await fetchStockBoxes());
-      setInventoryBoxFilter(String(box.id));
-      setStockBoxNoteDraft(box.note || "");
+      if (inventoryBoxFilter === String(box.id)) {
+        setStockBoxNoteDraft(box.note || "");
+      }
     } catch (err) {
       setError(errorText(err));
     }
@@ -1106,9 +1144,10 @@ export default function App() {
       setMergeParentBoxId("");
       const refreshed = await fetchStockBoxes();
       setStockBoxes(refreshed);
-      setInventoryBoxFilter(String(childId));
       const current = refreshed.find((b) => b.id === childId);
-      setStockBoxNoteDraft(current?.note || "");
+      if (inventoryBoxFilter === String(childId)) {
+        setStockBoxNoteDraft(current?.note || "");
+      }
     } catch (err) {
       setError(errorText(err));
     }
@@ -2690,11 +2729,32 @@ export default function App() {
               onClick={() => void onCombineInventoryOrders()}
             >
               {selectedInventoryOrderIds.length > 0
-                ? `合箱（已选 ${selectedInventoryOrderIds.length} 单）`
+                ? addToBoxId
+                  ? `将订单添加到 #${
+                      stockBoxes.find((b) => String(b.id) === addToBoxId)
+                        ?.box_no ?? addToBoxId
+                    }（已选 ${selectedInventoryOrderIds.length} 单）`
+                  : `合箱（已选 ${selectedInventoryOrderIds.length} 单）`
                 : selectedInventoryBox
                   ? "保存备注"
                   : "合箱"}
             </button>
+            <label className="inline-filter">
+              目标箱
+              <select
+                value={addToBoxId}
+                onChange={(e) => setAddToBoxId(e.target.value)}
+              >
+                <option value="">选择目标箱…</option>
+                {inventoryBoxSelectOptions.map(({ box, kind }) => (
+                  <option key={box.id} value={String(box.id)}>
+                    {kind === "child" ? "　└ " : ""}#{box.box_no}
+                    {box.note ? ` · ${box.note}` : ""}
+                    {`（${box.order_count} 单）`}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label className="inline-filter">
               箱子备注
               <input
