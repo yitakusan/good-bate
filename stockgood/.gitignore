@@ -1,0 +1,14 @@
+backend/.venv/
+backend/data/*.sqlite
+backend/data/*.sqlite-*
+backend/data/backups/
+backend/data/item_images/
+_import_tmp/
+backend/__pycache__/
+backend/**/__pycache__/
+frontend/node_modules/
+frontend/dist/
+.DS_Store
+*.pyc
+.env
+logs/

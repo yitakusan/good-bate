@@ -1,0 +1,103 @@
+=== ochanoko ===
+url=https://miraithings.com/view/item/000000000887
+final=https://miraithings.com/view/item/000000000887
+status=200
+title=第2回ゆるフェス△　富士山アクリルスタンド（各務原なでしこ） | 第２回ゆるフェス△ | mirai things Online Store （ミライシングス）
+og:title=第2回ゆるフェス△　富士山アクリルスタンド（各務原なでしこ） | 第２回ゆるフェス△ | mirai things Online Store （ミライシングス）
+og:image=
+price_candidates=['has:円', 'has:カート']
+links=[]
+
+=== ochanoko2 ===
+url=https://www.pricafe.shop/view/item/000000010417
+final=https://www.pricafe.shop/view/item/000000010417
+status=200
+title=TVアニメ「転生したらスライムだった件」 等身アクリルスタンド 八星魔王Ver ディーノ　 転スラ グッズ
+og:title=TVアニメ「転生したらスライムだった件」 等身アクリルスタンド 八星魔王Ver ディーノ　 転スラ グッズ
+og:image=
+price_candidates=['￥1,980 （税込）', 'has:円', 'has:カート']
+links=['/view/item/000000010416', '/view/item/000000010416', '/view/item/000000011710', '/view/item/000000011710', '/view/item/000000011711', '/view/item/000000011711', '/view/item/000000015018', '/view/item/000000015018']
+
+=== eccube ===
+url=https://medicos-e-shop.net/products/detail/40439
+final=https://medicos-e-shop.net/products/detail/40439
+status=200
+title=【予約フィギュア】超像可動『ジョジョの奇妙な冒険 第3部』「ザ・ワールド」 / MEDICOS ONLINE SHOP
+og:title=
+og:image=
+price_candidates=['has:円', 'has:在庫', 'has:カート']
+links=[]
+
+=== eccube2 ===
+url=https://vvstore.jp/products/detail/188388
+final=https://vvstore.jp/products/detail/188388
+status=200
+title=【忍たま乱太郎】「同室」アクリルフィギュアスタンド(食満留三郎) / vvstore
+og:title=【忍たま乱太郎】「同室」アクリルフィギュアスタンド(食満留三郎)
+og:image=https://vvstore.jp/html/upload/save_image/188388/item_582419.jpg
+price_candidates=['has:在庫', 'has:カート']
+links=['https://twitter.com/intent/tweet?text=【忍たま乱太郎】「同室」アクリルフィギュアスタンド(食満留三郎)&url=https://vvstore.jp/products/detail/188388', 'https://www.facebook.com/share.php?u=https://vvstore.jp/products/detail/188388', 'https://timeline.line.me/social-plugin/share?url=https://vvstore.jp/products/detail/188388', 'https://vvstore.jp/feature/detail/5811', 'https://vvstore.jp/feature/detail/5811']
+
+=== asobi ===
+url=https://shop.asobistore.jp/products/detail/243307-00-00-00
+final=https://shop.asobistore.jp/products/detail/243307-00-00-00
+status=200
+title=学園アイドルマスター LIVE TOUR -標- ファイナル公演 公式トートバッグ
+og:title=学園アイドルマスター LIVE TOUR -標- ファイナル公演 公式トートバッグ
+og:image=https://shop.asobistore.jp/simages/product_image_large/4580891543245_01.jpg?1
+price_candidates=['4,000円 (税込)', 'has:円', 'has:カート']
+links=['mailto:?body=%E5%AD%A6%E5%9C%92%E3%82%A2%E3%82%A4%E3%83%89%E3%83%AB%E3%83%9E%E3%82%B9%E3%82%BF%E3%83%BC%20LIVE%20TOUR%20-%E6%A8%99-%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%8A%E3%83%AB%E5%85%AC%E6%BC%94%20%E5%85%AC%E5%BC%8F%E3%83%88%E3%83%BC%E3%83%88%E3%83%90%E3%83%83%E3%82%B0%20https%3A%2F%2Fshop.asobistore.jp%2Fproducts%2Fdetail%2F243307-00-00-00&subject=%E5%AD%A6%E5%9C%92%E3%82%A2%E3%82%A4%E3%83%89%E3%83%AB%E3%83%9E%E3%82%B9%E3%82%BF%E3%83%BC%20LIVE%20TOUR%20-%E6%A8%99-%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%8A%E3%83%AB%E5%85%AC%E6%BC%94%20%E5%85%AC%E5%BC%8F%E3%83%88%E3%83%BC%E3%83%88%E3%83%90%E3%83%83%E3%82%B0', 'http://www.facebook.com/share.php?u=https%3A%2F%2Fshop.asobistore.jp%2Fproducts%2Fdetail%2F243307-00-00-00', 'http://twitter.com/intent/tweet?text=%E5%AD%A6%E5%9C%92%E3%82%A2%E3%82%A4%E3%83%89%E3%83%AB%E3%83%9E%E3%82%B9%E3%82%BF%E3%83%BC%20LIVE%20TOUR%20-%E6%A8%99-%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%8A%E3%83%AB%E5%85%AC%E6%BC%94%20%E5%85%AC%E5%BC%8F%E3%83%88%E3%83%BC%E3%83%88%E3%83%90%E3%83%83%E3%82%B0%20https%3A%2F%2Fshop.asobistore.jp%2Fproducts%2Fdetail%2F243307-00-00-00', 'http://line.me/R/msg/text/?%E5%AD%A6%E5%9C%92%E3%82%A2%E3%82%A4%E3%83%89%E3%83%AB%E3%83%9E%E3%82%B9%E3%82%BF%E3%83%BC%20LIVE%20TOUR%20-%E6%A8%99-%20%E3%83%95%E3%82%A1%E3%82%A4%E3%83%8A%E3%83%AB%E5%85%AC%E6%BC%94%20%E5%85%AC%E5%BC%8F%E3%83%88%E3%83%BC%E3%83%88%E3%83%90%E3%83%83%E3%82%B0%20https%3A%2F%2Fshop.asobistore.jp%2Fproducts%2Fdetail%2F243307-00-00-00', '/products/detail/243224-00-00-00', '/products/detail/243224-00-00-00', '/products/detail/243305-00-00-00', '/products/detail/243305-00-00-00']
+
+=== kadokawa ===
+url=https://store.kadokawa.co.jp/shop/g/g7015027011501/
+final=https://store.kadokawa.co.jp/shop/g/g7015027011501/
+status=200
+title=STRANGER THAN HEAVEN Collector's Edition DXパック PS5版（予約特典付き）(Collector's Edition DXパック PS5版): ゲーム | カ
+og:title=STRANGER THAN HEAVEN Collector's Edition DXパック PS5版（予約特典付き）(Collector's Edition DXパック PS5版): ゲーム | カ
+og:image=https://store.kadokawa.co.jp/img/goods/L/7015027011501.jpg
+price_candidates=['24,600 円', 'has:円', 'has:カート']
+links=['https://store.kadokawa.co.jp/shop/g/g7015027011501/', 'https://twitter.com/intent/tweet?url=https://store.kadokawa.co.jp/shop/g/g7015027011501/', 'https://www.facebook.com/sharer/sharer.php?u=https://store.kadokawa.co.jp/shop/g/g7015027011501/', '/shop/g/g7015027011502/', '/shop/g/g7015027011503/', '/shop/g/g7015027011504/', 'https://store.kadokawa.co.jp/shop/g/g7015027011501/', 'https://store.kadokawa.co.jp/shop/g/g7015027011501/']
+
+=== colorme ===
+url=https://www.i-rightsshop.com/?pid=1712345678
+final=https://www.i-rightsshop.com/?pid=1712345678
+status=200
+title=アイライツ online shop
+og:title=
+og:image=
+price_candidates=['¥330 (税込)', 'has:円', 'has:在庫', 'has:カート', 'has:品切れ']
+links=[]
+
+=== colorme_cate ===
+url=https://www.i-rightsshop.com/?mode=cate&cbid=2627370&csid=0
+final=https://www.i-rightsshop.com/?mode=cate&cbid=2627370&csid=0
+status=200
+title=アイライツ online shop
+og:title=
+og:image=
+price_candidates=['¥330 (税込)', 'has:円', 'has:在庫', 'has:カート', 'has:品切れ']
+links=[]
+
+=== colorme_grp ===
+url=https://www.i-rightsshop.com/?mode=grp&gid=2747082
+final=https://www.i-rightsshop.com/?mode=grp&gid=2747082
+status=200
+title=アイライツ online shop
+og:title=
+og:image=
+price_candidates=['¥330 (税込)', 'has:円', 'has:在庫', 'has:カート', 'has:品切れ']
+links=[]
+
+=== hakusensha ===
+url=https://www.hakusensha-shop.co.jp/
+ERR=[Errno 11001] getaddrinfo failed
+
+=== hakuichi_cat ===
+url=https://hakuichi.jp/products/list.php?category_id=351
+final=https://hakuichi.jp/products/list.php?category_id=351
+status=200
+title=お皿・プレート | 金沢金箔の箔一| HAKUICHI STYLE
+og:title=
+og:image=https://hakuichi.jp/user_data/assets/files/ogp/craft_t01_dish_ogp.jpg
+price_candidates=['～', 'has:SOLD OUT', 'has:カート', 'has:品切れ']
+links=['/products/detail.php?product_id=194', '/products/detail.php?product_id=317', '/products/detail.php?product_id=418', '/products/detail.php?product_id=419', '/products/detail.php?product_id=420', '/products/detail.php?product_id=5161', '/products/detail.php?product_id=5160', '/products/detail.php?product_id=5159']

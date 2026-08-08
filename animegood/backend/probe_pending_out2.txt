@@ -1,0 +1,49 @@
+=== miraithings https://miraithings.com/view/category/all_items => 200 ===
+final=https://miraithings.com/view/category/all_items
+title=すべての商品 | mirai things Online Store （ミライシングス）
+item_links=['/view/item/000000000887?category_page_id=all_items', '/view/item/000000000888?category_page_id=all_items', '/view/item/000000000889?category_page_id=all_items', '/view/item/000000000890?category_page_id=all_items', '/view/item/000000000891?category_page_id=all_items', '/view/item/000000000892?category_page_id=all_items', '/view/item/000000000893?category_page_id=all_items', '/view/item/000000000894?category_page_id=all_items', '/view/item/000000000895?category_page_id=all_items', '/view/item/000000000896?category_page_id=all_items']
+regex={'view_item': 50, 'detail': 0, 'shop_g': 0, 'fs': 0}
+
+=== miraithings2 https://miraithings.com/view/search?search_keyword= => 200 ===
+final=https://miraithings.com/view/search?search_keyword=
+title=mirai things Online Store （ミライシングス） | 商品一覧
+item_links=['/view/item/000000000887', '/view/item/000000000888', '/view/item/000000000889', '/view/item/000000000890', '/view/item/000000000891', '/view/item/000000000892', '/view/item/000000000893', '/view/item/000000000894', '/view/item/000000000895', '/view/item/000000000896']
+regex={'view_item': 50, 'detail': 0, 'shop_g': 0, 'fs': 0}
+
+=== i-rights https://i-rightsshop.com/ => 200 ===
+final=https://www.i-rightsshop.com/
+title=アイライツ online shop
+item_links=[]
+regex={'view_item': 0, 'detail': 0, 'shop_g': 0, 'fs': 0}
+
+=== i-rights2 https://i-rightsshop.com/?mode=srh&cid=&keyword= => 200 ===
+final=https://www.i-rightsshop.com/?mode=srh&cid=&keyword=
+title=アイライツ online shop
+item_links=[]
+regex={'view_item': 0, 'detail': 0, 'shop_g': 0, 'fs': 0}
+
+=== hakuichi https://hakuichi.jp/products/list.php?category_id=351 => 200 ===
+final=https://hakuichi.jp/products/list.php?category_id=351
+title=お皿・プレート | 金沢金箔の箔一| HAKUICHI STYLE
+item_links=[]
+regex={'view_item': 0, 'detail': 0, 'shop_g': 0, 'fs': 0}
+
+=== kadokawa https://store.kadokawa.co.jp/shop/g/g502404/ => 404 ===
+final=https://store.kadokawa.co.jp/shop/g/g502404/
+title= | カドスト | KADOKAWA公式オンラインショップ
+item_links=[]
+regex={'view_item': 0, 'detail': 0, 'shop_g': 1, 'fs': 0}
+
+=== kadokawa2 https://store.kadokawa.co.jp/shop/default.aspx => 200 ===
+final=https://store.kadokawa.co.jp/shop/default.aspx
+title=カドスト | KADOKAWA公式オンラインショップ
+item_links=['/shop/g/g7015027011501/', '/shop/g/g302605002078/', '/shop/g/g302604000939/', '/shop/g/g302604002160/', '/shop/g/g302605002073/', '/shop/g/g555525120518/', '/shop/g/g322602001136/', '/shop/g/g302511004431/', '/shop/g/g7015026070901/', '/shop/g/g302504002907/']
+regex={'view_item': 0, 'detail': 0, 'shop_g': 57, 'fs': 0}
+
+=== hakusensha https://www.hakusensha-shop.co.jp/ ERR [Errno 11001] getaddrinfo failed ===
+
+=== pricafe https://www.pricafe.shop/view/category/all_items => 200 ===
+final=https://www.pricafe.shop/view/category/all_items
+title=プリンセスカフェショップオンラインのすべての商品
+item_links=['/view/item/000000010417?category_page_id=all_items', '/view/item/000000010417?category_page_id=all_items', '/view/item/000000019503?category_page_id=all_items', '/view/item/000000019503?category_page_id=all_items', '/view/item/000000019504?category_page_id=all_items', '/view/item/000000019504?category_page_id=all_items', '/view/item/000000019498?category_page_id=all_items', '/view/item/000000019498?category_page_id=all_items', '/view/item/000000019499?category_page_id=all_items', '/view/item/000000019499?category_page_id=all_items']
+regex={'view_item': 100, 'detail': 0, 'shop_g': 0, 'fs': 0}

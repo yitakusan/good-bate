@@ -1,0 +1,1 @@
+"""Anime merchandise aggregation backend."""

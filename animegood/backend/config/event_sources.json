@@ -1,0 +1,48 @@
+[
+  {
+    "id": "anique-news",
+    "shop": "Anique Shop",
+    "source_platform": "html-news",
+    "base_url": "https://shop.anique.jp/",
+    "list_path": "/blogs/news",
+    "url_prefix": "/blogs/news/",
+    "enabled": true,
+    "priority": 1,
+    "include_keywords": [],
+    "exclude_keywords": [
+      "発送遅延",
+      "配送遅延",
+      "お届け遅延",
+      "発送スケジュール",
+      "発送予定の変更",
+      "メンテナンス",
+      "休業のお知らせ",
+      "臨時休業",
+      "システム障害"
+    ],
+    "notes": "Shopify 博客；排除发货延迟/致歉/维护等客服公告，只保留活动向资讯。"
+  },
+  {
+    "id": "animeshi-news",
+    "shop": "animeshi",
+    "source_platform": "html-news",
+    "base_url": "https://animeshi.jp/",
+    "list_path": "/blogs/news",
+    "url_prefix": "/blogs/news/",
+    "enabled": true,
+    "priority": 2,
+    "include_keywords": [],
+    "exclude_keywords": [
+      "発送遅延",
+      "配送遅延",
+      "お届け遅延",
+      "発送スケジュール",
+      "発送予定の変更",
+      "メンテナンス",
+      "休業のお知らせ",
+      "臨時休業",
+      "システム障害"
+    ],
+    "notes": "animeshi 博客；同样排除发货延迟等噪音公告。"
+  }
+]

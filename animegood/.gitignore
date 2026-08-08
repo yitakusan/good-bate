@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Local data and secrets
+.env
+data/*.sqlite
+data/*.sqlite-*
+backend/data/*.sqlite
+backend/data/*.sqlite-*
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.cursor/

@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: ./backend
+    environment:
+      ANIMEGOOD_DATABASE_PATH: /app/data/animegood.sqlite
+      ANIMEGOOD_SOURCE_CONFIG_PATH: /app/config/sources.json
+      ANIMEGOOD_IP_ALIAS_PATH: /app/data/ip_aliases.json
+      # 公网请取消注释并填写：
+      # ANIMEGOOD_ADMIN_TOKEN: change-me
+      # ANIMEGOOD_SCRAPE_INTERVAL_HOURS: "6"
+    volumes:
+      - ./backend/config:/app/config:ro
+      - ./backend/data:/app/data
+    ports:
+      - "8001:8001"
+
+  frontend:
+    build:
+      context: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "5173:80"

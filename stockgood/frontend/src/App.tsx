@@ -1,0 +1,2312 @@
+import { FormEvent, useEffect, useMemo, useState } from "react";
+
+import {
+  ActionLog,
+  AppMeta,
+  Carrier,
+  ExpectedShipPeriod,
+  ItemStatus,
+  Line,
+  Order,
+  OrderRequest,
+  OrderRequestStatus,
+  OutboundBatch,
+  ScrapeProduct,
+  Shipment,
+  Stats,
+  TunnelStatus,
+  confirmOrderRequest,
+  confirmOutboundBatch,
+  confirmShipment,
+  createOrder,
+  createOrderInbound,
+  createOutboundBatch,
+  fetchActionLogs,
+  fetchItems,
+  fetchLatestActionLog,
+  fetchMeta,
+  fetchOrderRequests,
+  fetchOrders,
+  fetchOutboundBatches,
+  fetchShipments,
+  fetchShops,
+  fetchStats,
+  fetchTunnelStatus,
+  startTunnel,
+  stopTunnel,
+  getAdminToken,
+  rejectOrderRequest,
+  scrapeUrl,
+  setAdminToken,
+  undoActionLog,
+  updateItem,
+  updateOrder,
+} from "./api";
+import { batchScrapeDelayMs, waitForBatchScrape } from "./scrapeDelay";
+
+type Tab = "orders" | "requests" | "scrape" | "inbound" | "outbound" | "logs";
+const REQUEST_STATUS_LABEL: Record<OrderRequestStatus, string> = {
+  submitted: "已提交",
+  ordered: "已下单",
+  rejected: "已拒绝",
+};
+type DraftBox = {
+  box_no: number;
+  carrier: Carrier;
+  tracking_no: string;
+  item_ids: number[];
+};
+const STATUS_LABEL: Record<ItemStatus, string> = {
+  ordered: "已下单",
+  inbound_shipped: "已发往仓库",
+  in_stock: "在库",
+  outbound_shipped: "已发往用户",
+  delivered: "已签收",
+  cancelled: "已取消",
+};
+const CARRIER_LABEL: Record<Carrier, string> = {
+  yamato: "Yamato",
+  sagawa: "佐川急便",
+  other: "其他",
+};
+const PERIOD_LABEL: Record<ExpectedShipPeriod, string> = {
+  early: "上旬",
+  mid: "中旬",
+  late: "下旬",
+};
+type DraftLine = {
+  name: string;
+  qty: string;
+  unit_cost: string;
+  ip: string;
+  image_url: string;
+  source_url: string;
+};
+
+const EMPTY_LINE = (): DraftLine => ({
+  name: "",
+  qty: "1",
+  unit_cost: "",
+  ip: "",
+  image_url: "",
+  source_url: "",
+});
+
+const EMPTY_FORM = {
+  order_ref: "",
+  shop: "",
+  order_qty: "",
+  shipping_fee: "0",
+  order_image_url: "",
+  note: "",
+  expected_ship_at: "",
+  expected_ship_period: "" as "" | ExpectedShipPeriod,
+  lines: [EMPTY_LINE()] as DraftLine[],
+};
+
+function currentYearMonth() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function formatDate(value: string | null) {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+}
+
+function formatExpectedShip(
+  value: string | null,
+  period?: ExpectedShipPeriod | null,
+) {
+  if (!value) return "—";
+  const match = value.match(/^(\d{4})-(\d{2})/);
+  const month = match ? `${match[1]}年${Number(match[2])}月` : value;
+  return period ? `${month}${PERIOD_LABEL[period]}` : `${month}発送予定`;
+}
+
+function errorText(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Public apply page URL to share via tunnel (falls back to local /apply). */
+function applyShareUrl(tunnelUrl?: string | null) {
+  const base = (tunnelUrl || "").replace(/\/+$/, "");
+  if (base) return `${base}/apply`;
+  if (typeof window !== "undefined") {
+    return `${window.location.origin}/apply`;
+  }
+  return "/apply";
+}
+
+function groupLines(lines: Line[]) {
+  const groups = new Map<number, { orderRef: string; lines: Line[] }>();
+  for (const line of lines) {
+    const current = groups.get(line.order_id);
+    if (current) current.lines.push(line);
+    else {
+      groups.set(line.order_id, {
+        orderRef: line.order_ref || `订单 #${line.order_id}`,
+        lines: [line],
+      });
+    }
+  }
+  return [...groups.entries()];
+}
+
+export default function App() {
+  const [tab, setTab] = useState<Tab>("orders");
+  const [meta, setMeta] = useState<AppMeta | null>(null);
+  const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+  const [tunnelCopied, setTunnelCopied] = useState(false);
+  const [tunnelBusy, setTunnelBusy] = useState(false);
+  const [stats, setStats] = useState<Stats | null>(null);
+  const [orders, setOrders] = useState<Order[]>([]);
+  const [shops, setShops] = useState<string[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [stockLines, setStockLines] = useState<Line[]>([]);
+  const [batches, setBatches] = useState<OutboundBatch[]>([]);
+  const [logs, setLogs] = useState<ActionLog[]>([]);
+  const [latestLog, setLatestLog] = useState<ActionLog | null>(null);
+  const [orderRequests, setOrderRequests] = useState<OrderRequest[]>([]);
+  const [requestStatusFilter, setRequestStatusFilter] = useState("");
+  const [confirmDraft, setConfirmDraft] = useState<
+    Record<number, { shop_order_ref: string; staff_note: string; create_stock: boolean }>
+  >({});
+  const [rejectDraft, setRejectDraft] = useState<Record<number, string>>({});
+  const [adminTokenInput, setAdminTokenInput] = useState(() => getAdminToken());
+  const [loading, setLoading] = useState(false);
+  const [undoBusy, setUndoBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const [statusFilter, setStatusFilter] = useState("");
+  const [shopFilter, setShopFilter] = useState("");
+  const [shipMonthFilter, setShipMonthFilter] = useState("");
+  const [q, setQ] = useState("");
+  const [showCreate, setShowCreate] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
+  const [expandedOrderIds, setExpandedOrderIds] = useState<number[]>([]);
+
+  const [scrapeUrlValue, setScrapeUrlValue] = useState("");
+  const [scrapeOrderRef, setScrapeOrderRef] = useState("");
+  const [scrapeOrderQty, setScrapeOrderQty] = useState("");
+  const [scrapeShippingFee, setScrapeShippingFee] = useState("0");
+  const [scrapeBusy, setScrapeBusy] = useState(false);
+  const [collection, setCollection] = useState<ScrapeProduct[]>([]);
+  const [collectionPick, setCollectionPick] = useState<number[]>([]);
+  const [collectionQty, setCollectionQty] = useState<Record<number, string>>({});
+  const [collectionBarcode, setCollectionBarcode] = useState<
+    Record<number, string>
+  >({});
+  const [collectionPrice, setCollectionPrice] = useState<Record<number, string>>(
+    {},
+  );
+  const [batchExpectedShip, setBatchExpectedShip] = useState("");
+  const [batchExpectedPeriod, setBatchExpectedPeriod] = useState<
+    "" | ExpectedShipPeriod
+  >("");
+
+  const [selectedInboundIds, setSelectedInboundIds] = useState<number[]>([]);
+  const [inboundCarrier, setInboundCarrier] = useState<Carrier>("other");
+  const [inboundTrackingNo, setInboundTrackingNo] = useState("");
+  const [preferredInboundOrderIds, setPreferredInboundOrderIds] = useState<
+    number[]
+  >([]);
+
+  const [selectedStockIds, setSelectedStockIds] = useState<number[]>([]);
+  const [draftBoxes, setDraftBoxes] = useState<DraftBox[]>([]);
+  const [batchNote, setBatchNote] = useState("");
+
+  const inboundLines = useMemo(
+    () =>
+      orders.flatMap((order) =>
+        order.lines.filter((line) => line.status === "ordered"),
+      ),
+    [orders],
+  );
+  const assignedIds = useMemo(
+    () => new Set(draftBoxes.flatMap((box) => box.item_ids)),
+    [draftBoxes],
+  );
+
+  async function loadChrome() {
+    const [nextStats, nextMeta, nextLog] = await Promise.all([
+      fetchStats(),
+      fetchMeta(),
+      fetchLatestActionLog(),
+    ]);
+    setStats(nextStats);
+    setMeta(nextMeta);
+    setLatestLog(nextLog);
+  }
+
+  async function loadOrders() {
+    const [list, shopList] = await Promise.all([
+      fetchOrders({
+        status: statusFilter || undefined,
+        shop: shopFilter || undefined,
+        q: q.trim() || undefined,
+        expected_ship_month: shipMonthFilter || undefined,
+      }),
+      fetchShops(),
+    ]);
+    setOrders(list);
+    setShops(shopList);
+  }
+
+  async function loadInbound() {
+    const [list, pending] = await Promise.all([
+      fetchOrders({ status: "ordered" }),
+      fetchShipments({ direction: "inbound", status: "shipped" }),
+    ]);
+    const available = list.filter((order) =>
+      order.lines.some((line) => line.status === "ordered"),
+    );
+    setOrders(available);
+    setShipments(pending);
+  }
+
+  async function loadOutbound() {
+    const [lines, existing] = await Promise.all([
+      fetchItems({ status: "in_stock" }),
+      fetchOutboundBatches(),
+    ]);
+    setStockLines(lines);
+    setBatches(existing);
+  }
+
+  async function loadOrderRequests() {
+    const list = await fetchOrderRequests(requestStatusFilter || undefined);
+    setOrderRequests(list);
+  }
+
+  async function refresh() {
+    setLoading(true);
+    setError("");
+    try {
+      await loadChrome();
+      if (tab === "orders") await loadOrders();
+      if (tab === "requests") await loadOrderRequests();
+      if (tab === "inbound") await loadInbound();
+      if (tab === "outbound") await loadOutbound();
+      if (tab === "logs") setLogs(await fetchActionLogs(80));
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    void refresh();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, statusFilter, shopFilter, shipMonthFilter, requestStatusFilter]);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function pollTunnel() {
+      try {
+        const status = await fetchTunnelStatus();
+        if (!cancelled) setTunnel(status);
+      } catch {
+        if (!cancelled) {
+          setTunnel({ running: false, url: "", stale: false });
+        }
+      }
+    }
+    void pollTunnel();
+    const timer = window.setInterval(() => void pollTunnel(), 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (tab !== "inbound" || !preferredInboundOrderIds.length) return;
+    const preferred = new Set(preferredInboundOrderIds);
+    const ids = inboundLines
+      .filter((line) => preferred.has(line.order_id))
+      .map((line) => line.id);
+    if (ids.length) setSelectedInboundIds(ids);
+    setPreferredInboundOrderIds([]);
+  }, [tab, preferredInboundOrderIds, inboundLines]);
+
+  async function onSearch(event: FormEvent) {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      await loadOrders();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function updateDraftLine(index: number, patch: Partial<DraftLine>) {
+    setForm((current) => ({
+      ...current,
+      lines: current.lines.map((line, i) =>
+        i === index ? { ...line, ...patch } : line,
+      ),
+    }));
+  }
+
+  async function onCreateOrder(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    const lines = form.lines
+      .map((line) => ({
+        name: line.name.trim(),
+        shop: form.shop.trim(),
+        qty: Math.max(1, Number(line.qty) || 1),
+        unit_cost: line.unit_cost ? Number(line.unit_cost) : null,
+        ip: line.ip.trim(),
+        image_url: line.image_url.trim(),
+        source_url: line.source_url.trim(),
+      }))
+      .filter((line) => line.name);
+    if (!lines.length) {
+      setError("请至少填写一行货品名称");
+      return;
+    }
+    const lineQtySum = lines.reduce((sum, line) => sum + line.qty, 0);
+    try {
+      const shippingRaw = form.shipping_fee.trim();
+      const shippingFee = shippingRaw === "" ? 0 : Number(shippingRaw);
+      await createOrder({
+        order_ref: form.order_ref.trim(),
+        shop: form.shop.trim(),
+        order_qty: form.order_qty
+          ? Math.max(1, Number(form.order_qty) || 1)
+          : lineQtySum,
+        shipping_fee: Number.isNaN(shippingFee) ? 0 : Math.max(0, shippingFee),
+        order_image_url: form.order_image_url.trim(),
+        note: form.note.trim(),
+        expected_ship_at: form.expected_ship_at || null,
+        expected_ship_period: form.expected_ship_at
+          ? form.expected_ship_period || null
+          : null,
+        lines,
+      });
+      setForm({ ...EMPTY_FORM, lines: [EMPTY_LINE()] });
+      setShowCreate(false);
+      setMessage(`已登记订单（${lines.length} 行）`);
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  function toggleOrderSelected(orderId: number) {
+    setSelectedOrderIds((ids) =>
+      ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
+  }
+
+  function toggleOrderExpanded(orderId: number) {
+    setExpandedOrderIds((ids) =>
+      ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
+  }
+
+  async function onCancelSelectedOrders() {
+    const targets = orders.filter(
+      (order) =>
+        selectedOrderIds.includes(order.id) &&
+        order.status !== "cancelled" &&
+        order.status !== "delivered",
+    );
+    if (!targets.length) {
+      setError("没有可取消的已选订单");
+      return;
+    }
+    const refs = targets
+      .map((order) => order.order_ref || `#${order.id}`)
+      .slice(0, 8)
+      .join("、");
+    const more =
+      targets.length > 8 ? ` 等 ${targets.length} 笔` : `（共 ${targets.length} 笔）`;
+    if (!confirm(`确认取消已选订单？\n${refs}${more}`)) return;
+    if (
+      !confirm(
+        `再次确认：将取消 ${targets.length} 笔订单及其未完结明细，此操作请谨慎。\n确定继续？`,
+      )
+    ) {
+      return;
+    }
+    try {
+      for (const order of targets) {
+        await updateOrder(order.id, { status: "cancelled" });
+      }
+      setSelectedOrderIds([]);
+      setMessage(`已取消 ${targets.length} 笔订单`);
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  function sendSelectedToInbound() {
+    const targets = orders.filter(
+      (order) =>
+        selectedOrderIds.includes(order.id) &&
+        order.status !== "cancelled" &&
+        order.status !== "delivered" &&
+        order.lines.some((line) => line.status === "ordered"),
+    );
+    if (!targets.length) {
+      setError("请勾选至少 1 笔仍有「已下单」行的订单");
+      return;
+    }
+    setPreferredInboundOrderIds(targets.map((order) => order.id));
+    setTab("inbound");
+    setMessage(
+      targets.length === 1
+        ? `已带入订单 ${targets[0].order_ref || `#${targets[0].id}`} 到进库`
+        : `已带入 ${targets.length} 笔订单到进库（可一次登记多个包裹）`,
+    );
+  }
+
+  async function onUpdateLine(
+    id: number,
+    patch: { barcode?: string; status?: ItemStatus; qty?: number },
+  ) {
+    try {
+      await updateItem(id, patch);
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  function looksLikeHtmlDocument(raw: string): boolean {
+    const text = raw.trim();
+    if (text.length < 200) return false;
+    const lower = text.slice(0, 4000).toLowerCase();
+    return (
+      lower.startsWith("<!doctype html") ||
+      lower.startsWith("<html") ||
+      (lower.includes("<html") && lower.includes("</html")) ||
+      (lower.includes("<head") && lower.includes("<body") && lower.includes("og:title"))
+    );
+  }
+
+  function parseScrapeUrls(raw: string): string[] {
+    const seen = new Set<string>();
+    const urls: string[] = [];
+    for (const part of raw.split(/[\n\r,;\t]+/)) {
+      let text = part.trim();
+      if (!text) continue;
+      // allow "1. https://..." / "- https://..."
+      text = text.replace(/^\d+[\.\)、]\s*/, "").replace(/^[-*•]\s*/, "");
+      if (!/^https?:\/\//i.test(text) && text.includes(".")) {
+        text = `https://${text}`;
+      }
+      if (!/^https?:\/\//i.test(text)) continue;
+      const key = text.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      urls.push(text);
+    }
+    return urls;
+  }
+
+  function appendScrapeProducts(
+    products: ScrapeProduct[],
+    existing: ScrapeProduct[],
+  ) {
+    if (!products.length) return { next: existing, added: [] as ScrapeProduct[] };
+    const seen = new Set(
+      existing.map((p) => (p.source_url || p.name).trim().toLowerCase()),
+    );
+    const added: ScrapeProduct[] = [];
+    for (const product of products) {
+      const key = (product.source_url || product.name).trim().toLowerCase();
+      if (key && seen.has(key)) continue;
+      if (key) seen.add(key);
+      added.push(product);
+    }
+    if (!added.length) return { next: existing, added };
+    const base = existing.length;
+    const next = [...existing, ...added];
+    const newIndexes = added.map((_, i) => base + i);
+    setCollection(next);
+    setCollectionPick((pick) => [...pick, ...newIndexes]);
+    setCollectionQty((qtyMap) => {
+      const copy = { ...qtyMap };
+      for (const index of newIndexes) {
+        const product = next[index];
+        const fromProduct =
+          product.qty != null && product.qty >= 1 ? String(product.qty) : "";
+        copy[index] = copy[index] || fromProduct || "1";
+      }
+      return copy;
+    });
+    setCollectionPrice((priceMap) => {
+      const copy = { ...priceMap };
+      for (const index of newIndexes) {
+        const product = next[index];
+        copy[index] =
+          copy[index] ||
+          (product.unit_cost != null ? String(product.unit_cost) : "");
+      }
+      return copy;
+    });
+    setCollectionBarcode((barcodeMap) => {
+      const copy = { ...barcodeMap };
+      for (const index of newIndexes) {
+        const product = next[index];
+        copy[index] = copy[index] || (product.barcode || "").trim();
+      }
+      return copy;
+    });
+    const withShip = products.find((product) => product.expected_ship_at);
+    if (withShip?.expected_ship_at && !batchExpectedShip) {
+      setBatchExpectedShip(withShip.expected_ship_at);
+      setBatchExpectedPeriod(withShip.expected_ship_period || "");
+    }
+    return { next, added };
+  }
+
+  async function onScrape() {
+    const raw = scrapeUrlValue;
+    if (looksLikeHtmlDocument(raw)) {
+      setScrapeBusy(true);
+      setError("");
+      setMessage("正在解析粘贴的页面 HTML…");
+      try {
+        const result = await scrapeUrl("", raw);
+        const { added } = appendScrapeProducts(result.products || [], collection);
+        if (result.order_ref?.trim()) {
+          setScrapeOrderRef(result.order_ref.trim());
+        }
+        if (result.shipping_fee != null && !Number.isNaN(Number(result.shipping_fee))) {
+          setScrapeShippingFee(String(result.shipping_fee));
+        }
+        setMessage(
+          result.message ||
+            `已从 HTML 解析，新增 ${added.length} 条商品`,
+        );
+        if (added.length) setScrapeUrlValue("");
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setScrapeBusy(false);
+      }
+      return;
+    }
+
+    const urls = parseScrapeUrls(raw);
+    if (!urls.length) {
+      setError(
+        "请粘贴网址（每行一个），或粘贴浏览器「查看网页源代码」的整页 HTML（zozo.jp 等被拦截站点用）",
+      );
+      return;
+    }
+    setScrapeBusy(true);
+    setError("");
+    setMessage("");
+    let addedTotal = 0;
+    let ok = 0;
+    let working = collection;
+    const failures: string[] = [];
+    let previousFailed = false;
+    try {
+      for (let i = 0; i < urls.length; i += 1) {
+        const url = urls[i];
+        if (i > 0) {
+          const delayMs = batchScrapeDelayMs(
+            urls[i - 1],
+            url,
+            previousFailed,
+          );
+          setMessage(`等待 ${Math.ceil(delayMs / 1000)} 秒后继续抓取 ${i + 1}/${urls.length}…`);
+          await waitForBatchScrape(delayMs);
+        }
+        setMessage(`正在抓取 ${i + 1}/${urls.length}…`);
+        previousFailed = false;
+        try {
+          const result = await scrapeUrl(url);
+          ok += 1;
+          const { next, added } = appendScrapeProducts(
+            result.products || [],
+            working,
+          );
+          working = next;
+          addedTotal += added.length;
+        } catch (err) {
+          failures.push(`${url} → ${errorText(err)}`);
+          previousFailed = true;
+        }
+      }
+      const failText = failures.length
+        ? `；失败 ${failures.length} 条`
+        : "";
+      setMessage(
+        `抓取完成：成功 ${ok}/${urls.length} 个链接，新增 ${addedTotal} 条商品${failText}`,
+      );
+      if (failures.length) {
+        setError(failures.slice(0, 5).join("\n"));
+      }
+      if (ok > 0) {
+        setScrapeUrlValue("");
+      }
+    } finally {
+      setScrapeBusy(false);
+    }
+  }
+
+  async function onBatchCreate() {
+    if (!collectionPick.length) {
+      setError("请至少勾选一件");
+      return;
+    }
+    const sharedRef =
+      scrapeOrderRef.trim() || `SCRAPE-${new Date().toISOString().slice(0, 10)}`;
+    try {
+      const picked = collectionPick
+        .slice()
+        .sort((a, b) => a - b)
+        .map((index) => {
+          const product = collection[index];
+          const shipAt =
+            product.expected_ship_at || batchExpectedShip.trim() || null;
+          const priceText = (collectionPrice[index] || "").trim();
+          const unitCost = priceText
+            ? Number(priceText)
+            : product.unit_cost;
+          return {
+            name: product.name,
+            shop: product.shop,
+            qty: Math.max(1, Number(collectionQty[index]) || 1),
+            unit_cost:
+              unitCost != null && !Number.isNaN(Number(unitCost))
+                ? Number(unitCost)
+                : null,
+            ip: product.ip,
+            image_url: product.image_url,
+            source_url: product.source_url,
+            barcode: (collectionBarcode[index] || product.barcode || "").trim(),
+            expected_ship_at: shipAt,
+            expected_ship_period: product.expected_ship_at
+              ? product.expected_ship_period || null
+              : shipAt
+                ? batchExpectedPeriod || null
+                : null,
+          };
+        });
+      const shop =
+        picked.find((line) => line.shop)?.shop ||
+        collection[collectionPick[0]]?.shop ||
+        "";
+      const lineQtySum = picked.reduce((sum, line) => sum + line.qty, 0);
+      const shippingRaw = scrapeShippingFee.trim();
+      const shippingFee = shippingRaw === "" ? 0 : Number(shippingRaw);
+      await createOrder({
+        order_ref: sharedRef,
+        shop,
+        order_qty: scrapeOrderQty
+          ? Math.max(1, Number(scrapeOrderQty) || 1)
+          : lineQtySum,
+        shipping_fee: Number.isNaN(shippingFee) ? 0 : Math.max(0, shippingFee),
+        expected_ship_at: batchExpectedShip.trim() || null,
+        expected_ship_period: batchExpectedShip.trim()
+          ? batchExpectedPeriod || null
+          : null,
+        lines: picked,
+      });
+      setCollection([]);
+      setCollectionPick([]);
+      setCollectionQty({});
+      setCollectionPrice({});
+      setCollectionBarcode({});
+      setScrapeUrlValue("");
+      setScrapeOrderRef("");
+      setScrapeOrderQty("");
+      setScrapeShippingFee("0");
+      setBatchExpectedShip("");
+      setBatchExpectedPeriod("");
+      setMessage(`已导入 1 笔订单「${sharedRef}」，含 ${picked.length} 行明细`);
+      setTab("orders");
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  function toggleInboundLine(lineId: number) {
+    setSelectedInboundIds((current) =>
+      current.includes(lineId)
+        ? current.filter((id) => id !== lineId)
+        : [...current, lineId],
+    );
+  }
+
+  function toggleInboundOrderAll(orderId: number) {
+    const ids = inboundLines
+      .filter((line) => line.order_id === orderId)
+      .map((line) => line.id);
+    setSelectedInboundIds((current) => {
+      const allSelected = ids.length > 0 && ids.every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !ids.includes(id))
+        : [...new Set([...current, ...ids])];
+    });
+  }
+
+  async function onConfirmInboundToStock() {
+    const selected = inboundLines.filter((line) =>
+      selectedInboundIds.includes(line.id),
+    );
+    if (!selected.length) {
+      setError("请先勾选要进库的行");
+      return;
+    }
+    const byOrder = new Map<number, Line[]>();
+    for (const line of selected) {
+      const list = byOrder.get(line.order_id) || [];
+      list.push(line);
+      byOrder.set(line.order_id, list);
+    }
+    const tracking = inboundTrackingNo.trim();
+    if (tracking && byOrder.size > 1) {
+      setError("填写快递单号时请只勾选一笔订单；多笔订单请留空单号或分开进库");
+      return;
+    }
+    if (
+      !confirm(
+        `确认进库？将把已选 ${selected.length} 行直接变为在库（${byOrder.size} 笔订单）。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      for (const [orderId, lines] of byOrder) {
+        const shipment = await createOrderInbound(orderId, {
+          tracking_no: tracking,
+          carrier: inboundCarrier,
+          item_ids: lines.map((line) => line.id),
+        });
+        await confirmShipment(shipment.id);
+      }
+      setSelectedInboundIds([]);
+      setInboundTrackingNo("");
+      setInboundCarrier("other");
+      setMessage(`已进库 ${selected.length} 行，现为在库`);
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+      await refresh();
+    }
+  }
+
+  function toggleStockOrder(line: Line) {
+    const ids = stockLines
+      .filter((candidate) => candidate.order_id === line.order_id)
+      .map((candidate) => candidate.id)
+      .filter((id) => !assignedIds.has(id));
+    setSelectedStockIds((current) => {
+      const allSelected = ids.every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !ids.includes(id))
+        : [...new Set([...current, ...ids])];
+    });
+  }
+
+  function addDraftBox() {
+    if (!selectedStockIds.length) {
+      setError("请先选择至少一个完整订单的在库行");
+      return;
+    }
+    setDraftBoxes((current) => [
+      ...current,
+      {
+        box_no: current.length
+          ? Math.max(...current.map((box) => box.box_no)) + 1
+          : 1,
+        carrier: "other",
+        tracking_no: "",
+        item_ids: selectedStockIds,
+      },
+    ]);
+    setSelectedStockIds([]);
+    setError("");
+  }
+
+  function updateDraftBox(index: number, patch: Partial<DraftBox>) {
+    setDraftBoxes((current) =>
+      current.map((box, boxIndex) =>
+        boxIndex === index ? { ...box, ...patch } : box,
+      ),
+    );
+  }
+
+  function removeDraftLine(boxIndex: number, id: number) {
+    setDraftBoxes((current) =>
+      current
+        .map((box, index) =>
+          index === boxIndex
+            ? { ...box, item_ids: box.item_ids.filter((itemId) => itemId !== id) }
+            : box,
+        )
+        .filter((box) => box.item_ids.length),
+    );
+    setSelectedStockIds((current) => [...new Set([...current, id])]);
+  }
+
+  async function onCreateOutbound() {
+    const included = new Set(draftBoxes.flatMap((box) => box.item_ids));
+    const includedOrderIds = new Set(
+      stockLines
+        .filter((line) => included.has(line.id))
+        .map((line) => line.order_id),
+    );
+    const missing = stockLines.filter(
+      (line) => includedOrderIds.has(line.order_id) && !included.has(line.id),
+    );
+    if (!draftBoxes.length || missing.length) {
+      setError(
+        missing.length
+          ? "出库批次不能部分出库：请把所选订单的全部在库行分配到箱子。"
+          : "请至少创建一个箱子",
+      );
+      return;
+    }
+    if (draftBoxes.some((box) => !box.tracking_no.trim())) {
+      setError("请填写每个箱子的快递单号");
+      return;
+    }
+    try {
+      await createOutboundBatch({
+        note: batchNote.trim(),
+        boxes: draftBoxes.map((box) => ({
+          box_no: box.box_no,
+          carrier: box.carrier,
+          tracking_no: box.tracking_no.trim(),
+          item_ids: box.item_ids,
+        })),
+      });
+      setDraftBoxes([]);
+      setSelectedStockIds([]);
+      setBatchNote("");
+      setMessage("出库批次已创建");
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onConfirmInbound(id: number) {
+    if (!confirm("确认整包到仓？包裹内全部货品将变为在库。")) return;
+    try {
+      await confirmShipment(id);
+      setMessage("已确认到仓");
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onConfirmAllInbound() {
+    if (!shipments.length) {
+      setError("没有待确认的进库包裹");
+      return;
+    }
+    if (
+      !confirm(
+        `确认一键到仓？将确认全部 ${shipments.length} 个包裹，货品将变为在库。`,
+      )
+    ) {
+      return;
+    }
+    try {
+      for (const shipment of shipments) {
+        await confirmShipment(shipment.id);
+      }
+      setMessage(`已确认 ${shipments.length} 个包裹到仓`);
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+      await refresh();
+    }
+  }
+
+  async function onConfirmBatch(id: number) {
+    if (!confirm("确认整个批次签收？批次内全部箱子将被确认。")) return;
+    try {
+      await confirmOutboundBatch(id);
+      setMessage("已确认批次签收");
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onUndo(id: number) {
+    if (!confirm("撤回该操作？仅可撤回最近一步。")) return;
+    setUndoBusy(true);
+    try {
+      await undoActionLog(id);
+      setMessage("已撤回");
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setUndoBusy(false);
+    }
+  }
+
+  async function onTunnelStart() {
+    setTunnelBusy(true);
+    setError("");
+    try {
+      const status = await startTunnel();
+      setTunnel({
+        running: !!status.running,
+        url: status.url || "",
+        stale: !!status.stale,
+      });
+      setMessage(status.message || "隧道已启动");
+      for (let i = 0; i < 8; i += 1) {
+        await new Promise((r) => window.setTimeout(r, 800));
+        const next = await fetchTunnelStatus();
+        setTunnel(next);
+        if (next.url) break;
+      }
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setTunnelBusy(false);
+    }
+  }
+
+  async function onTunnelStop() {
+    setTunnelBusy(true);
+    setError("");
+    try {
+      const status = await stopTunnel();
+      setTunnel({
+        running: !!status.running,
+        url: status.url || "",
+        stale: !!status.stale,
+      });
+      setMessage(status.message || "隧道已关闭");
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setTunnelBusy(false);
+    }
+  }
+
+  async function onConfirmRequest(req: OrderRequest) {
+    const draft = confirmDraft[req.id] || {
+      shop_order_ref: "",
+      staff_note: "",
+      create_stock: true,
+    };
+    if (!draft.shop_order_ref.trim()) {
+      setError("请填写店铺注文番号");
+      return;
+    }
+    setLoading(true);
+    setError("");
+    try {
+      await confirmOrderRequest(req.id, {
+        shop_order_ref: draft.shop_order_ref.trim(),
+        staff_note: draft.staff_note.trim(),
+        create_stock_order: draft.create_stock,
+        shipping_fee: 0,
+      });
+      setMessage(
+        draft.create_stock
+          ? `申请 ${req.request_code} 已确认下单，并已生成库存订单`
+          : `申请 ${req.request_code} 已确认下单`,
+      );
+      await loadOrderRequests();
+      if (draft.create_stock) await loadOrders();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onRejectRequest(req: OrderRequest) {
+    const reason = (rejectDraft[req.id] || "").trim();
+    if (!reason) {
+      setError("请填写拒绝原因");
+      return;
+    }
+    if (!confirm(`拒绝申请 ${req.request_code}？`)) return;
+    setLoading(true);
+    setError("");
+    try {
+      await rejectOrderRequest(req.id, reason);
+      setMessage(`申请 ${req.request_code} 已拒绝`);
+      await loadOrderRequests();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="app">
+      {meta?.is_shadow && (
+        <div className="shadow-banner">
+          测试影子库 · 不参与实际库存
+          <span className="muted"> · {meta.database}</span>
+        </div>
+      )}
+      <header className="top">
+        <div className="brand">
+          <h1>Stockgood{meta?.is_shadow ? " · 测试" : ""}</h1>
+          <p className="brand-flow">订单 → 进库 → 出库 → 签收</p>
+          <div className="tunnel-panel">
+            <div className="tunnel-controls" aria-label="隧道开关">
+              <button
+                type="button"
+                className="btn tunnel-toggle"
+                disabled={tunnelBusy || !!tunnel?.running}
+                onClick={() => void onTunnelStart()}
+                title="开启 Cloudflare 临时隧道"
+              >
+                {tunnelBusy && !tunnel?.running ? "开启中…" : "开启"}
+              </button>
+              <button
+                type="button"
+                className="btn tunnel-toggle"
+                disabled={
+                  tunnelBusy || (!tunnel?.running && !tunnel?.stale && !tunnel?.url)
+                }
+                onClick={() => void onTunnelStop()}
+                title="关闭隧道"
+              >
+                {tunnelBusy && tunnel?.running ? "关闭中…" : "关闭"}
+              </button>
+            </div>
+            <div className="tunnel-stack">
+              <div
+                className={`tunnel-badge${tunnel?.running ? " on" : " off"}${tunnel?.stale ? " stale" : ""}`}
+                title={
+                  tunnel?.running
+                    ? "Cloudflare 临时隧道运行中"
+                    : tunnel?.stale
+                      ? "隧道已断开（仍保留上次链接）"
+                      : "隧道未开启"
+                }
+              >
+                <span className="tunnel-dot" aria-hidden />
+                <span className="tunnel-label">
+                  {tunnel == null
+                    ? "隧道检测中…"
+                    : tunnel.running
+                      ? "隧道开启"
+                      : tunnel.stale
+                        ? "隧道已断开"
+                        : "隧道关闭"}
+                </span>
+                {tunnel?.url ? (
+                  <a
+                    className="tunnel-url"
+                    href={tunnel.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title="隧道入口"
+                  >
+                    {tunnel.url.replace(/^https:\/\//, "").replace(/\/+$/, "")}
+                  </a>
+                ) : null}
+              </div>
+              <div className="tunnel-apply-row">
+                <span className="tunnel-apply-label">顾客申请页</span>
+                <a
+                  className="tunnel-url"
+                  href={applyShareUrl(tunnel?.url)}
+                  target="_blank"
+                  rel="noreferrer"
+                  title="发给朋友的申请页链接"
+                >
+                  {tunnel?.url
+                    ? applyShareUrl(tunnel.url).replace(/^https:\/\//, "")
+                    : "/apply"}
+                </a>
+                {tunnel?.url ? (
+                  <button
+                    type="button"
+                    className="btn tunnel-copy"
+                    onClick={() => {
+                      void navigator.clipboard
+                        .writeText(applyShareUrl(tunnel.url))
+                        .then(() => {
+                          setTunnelCopied(true);
+                          window.setTimeout(() => setTunnelCopied(false), 1500);
+                        });
+                    }}
+                  >
+                    {tunnelCopied ? "已复制" : "复制"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          </div>
+        </div>
+        {stats && (
+          <div className="stats">
+            {(["ordered", "inbound_shipped", "in_stock", "outbound_shipped", "delivered"] as ItemStatus[]).map(
+              (status) => (
+                <div className="stat" key={status}>
+                  <b>{stats[status]}</b>
+                  <span>{STATUS_LABEL[status]}</span>
+                </div>
+              ),
+            )}
+          </div>
+        )}
+      </header>
+
+      {meta?.auth_required ? (
+        <div className="admin-token-bar panel">
+          <label>
+            管理口令
+            <input
+              type="password"
+              value={adminTokenInput}
+              onChange={(e) => setAdminTokenInput(e.target.value)}
+              placeholder="X-Admin-Token"
+              autoComplete="off"
+            />
+          </label>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              setAdminToken(adminTokenInput.trim());
+              setMessage(adminTokenInput.trim() ? "管理口令已保存" : "已清除管理口令");
+              void refresh();
+            }}
+          >
+            保存口令
+          </button>
+        </div>
+      ) : null}
+
+      <nav className="tabs">
+        {(
+          [
+            ["orders", "订单"],
+            ["requests", "申请单"],
+            ["scrape", "抓取导入"],
+            ["inbound", "进库"],
+            ["outbound", "出库"],
+            ["logs", "操作日志"],
+          ] as [Tab, string][]
+        ).map(([key, label]) => (
+          <button
+            type="button"
+            key={key}
+            className={tab === key ? "active" : ""}
+            onClick={() => {
+              const switchTab = () => setTab(key);
+              const doc = document as Document & {
+                startViewTransition?: (cb: () => void) => void;
+              };
+              if (typeof doc.startViewTransition === "function") {
+                doc.startViewTransition(switchTab);
+              } else {
+                switchTab();
+              }
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </nav>
+
+      {latestLog?.undoable && (
+        <div className="undo-banner">
+          <span>
+            最近操作：{latestLog.summary}
+            <span className="muted"> · {formatDate(latestLog.created_at)}</span>
+          </span>
+          <button
+            type="button"
+            className="btn"
+            disabled={undoBusy}
+            onClick={() => void onUndo(latestLog.id)}
+          >
+            {undoBusy ? "撤回中…" : "撤回"}
+          </button>
+        </div>
+      )}
+      {error && <div className="error">{error}</div>}
+      {message && <div className="ok-msg">{message}</div>}
+      {loading && <div className="muted">加载中…</div>}
+
+      {tab === "orders" && (
+        <section className="panel">
+          <form className="toolbar" onSubmit={onSearch}>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
+              <option value="">全部状态</option>
+              {Object.entries(STATUS_LABEL).map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+            <select value={shopFilter} onChange={(e) => setShopFilter(e.target.value)}>
+              <option value="">全部店铺</option>
+              {shops.map((shop) => <option key={shop}>{shop}</option>)}
+            </select>
+            <label className="inline-filter">
+              预计发货
+              <input
+                type="month"
+                value={shipMonthFilter}
+                onChange={(e) => setShipMonthFilter(e.target.value)}
+              />
+            </label>
+            <button
+              type="button"
+              className={`btn${shipMonthFilter === currentYearMonth() ? " btn-primary" : ""}`}
+              onClick={() => setShipMonthFilter(currentYearMonth())}
+            >
+              本月
+            </button>
+            {shipMonthFilter && (
+              <button type="button" className="btn" onClick={() => setShipMonthFilter("")}>
+                清除月份
+              </button>
+            )}
+            <input
+              type="search"
+              placeholder="搜索订单号 / 名称 / 店铺 / IP / 条形码"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+            />
+            <button className="btn" type="submit">搜索</button>
+            <button
+              className="btn btn-primary"
+              type="button"
+              onClick={() => setShowCreate((value) => !value)}
+            >
+              {showCreate ? "收起" : "登记订单"}
+            </button>
+          </form>
+          <p className="muted">{orders.length} 个订单</p>
+          {showCreate && (
+            <form className="create-box" onSubmit={onCreateOrder}>
+              <div className="form-grid">
+                <label>订单号<input value={form.order_ref} onChange={(e) => setForm({ ...form, order_ref: e.target.value })} /></label>
+                <label>店铺<input value={form.shop} onChange={(e) => setForm({ ...form, shop: e.target.value })} /></label>
+                <label>
+                  下单数量
+                  <input
+                    type="number"
+                    min={1}
+                    value={form.order_qty}
+                    placeholder="可留空=数量合计"
+                    onChange={(e) => setForm({ ...form, order_qty: e.target.value })}
+                  />
+                </label>
+                <label>
+                  运费（JPY）
+                  <input
+                    type="number"
+                    min={0}
+                    step="1"
+                    value={form.shipping_fee}
+                    placeholder="整单运费"
+                    onChange={(e) => setForm({ ...form, shipping_fee: e.target.value })}
+                  />
+                </label>
+                <label>订单截图 URL<input value={form.order_image_url} onChange={(e) => setForm({ ...form, order_image_url: e.target.value })} /></label>
+                <label>预计发货月<input type="month" value={form.expected_ship_at} onChange={(e) => setForm({ ...form, expected_ship_at: e.target.value })} /></label>
+                <label>上中下旬<select value={form.expected_ship_period} disabled={!form.expected_ship_at} onChange={(e) => setForm({ ...form, expected_ship_period: e.target.value as "" | ExpectedShipPeriod })}><option value="">整月</option><option value="early">上旬</option><option value="mid">中旬</option><option value="late">下旬</option></select></label>
+                <label className="full">备注<textarea value={form.note} onChange={(e) => setForm({ ...form, note: e.target.value })} /></label>
+              </div>
+              <div className="draft-lines">
+                <div className="toolbar">
+                  <strong>明细行（一单可多品）</strong>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() =>
+                      setForm((current) => ({
+                        ...current,
+                        lines: [...current.lines, EMPTY_LINE()],
+                      }))
+                    }
+                  >
+                    添加一行
+                  </button>
+                </div>
+                {form.lines.map((line, index) => (
+                  <div className="draft-line" key={index}>
+                    <div className="draft-line-head">
+                      <span>第 {index + 1} 行</span>
+                      {form.lines.length > 1 && (
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          onClick={() =>
+                            setForm((current) => ({
+                              ...current,
+                              lines: current.lines.filter((_, i) => i !== index),
+                            }))
+                          }
+                        >
+                          删除
+                        </button>
+                      )}
+                    </div>
+                    <div className="form-grid">
+                      <label className="full">
+                        货品名称 *
+                        <input
+                          required
+                          value={line.name}
+                          onChange={(e) => updateDraftLine(index, { name: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        数量
+                        <input
+                          type="number"
+                          min={1}
+                          value={line.qty}
+                          onChange={(e) => updateDraftLine(index, { qty: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        单价
+                        <input
+                          type="number"
+                          step="0.01"
+                          value={line.unit_cost}
+                          onChange={(e) => updateDraftLine(index, { unit_cost: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        IP / 作品
+                        <input
+                          value={line.ip}
+                          onChange={(e) => updateDraftLine(index, { ip: e.target.value })}
+                        />
+                      </label>
+                      <label>
+                        货品图片 URL
+                        <input
+                          value={line.image_url}
+                          onChange={(e) => updateDraftLine(index, { image_url: e.target.value })}
+                        />
+                      </label>
+                      <label className="full">
+                        原链接
+                        <input
+                          value={line.source_url}
+                          onChange={(e) => updateDraftLine(index, { source_url: e.target.value })}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <button className="btn btn-primary">保存订单（{form.lines.length} 行）</button>
+            </form>
+          )}
+          {orders.length > 0 && (
+            <div className="toolbar order-select-bar">
+              <label className="check-inline">
+                <input
+                  type="checkbox"
+                  checked={
+                    orders.length > 0 &&
+                    orders.every((order) => selectedOrderIds.includes(order.id))
+                  }
+                  onChange={(e) =>
+                    setSelectedOrderIds(
+                      e.target.checked ? orders.map((order) => order.id) : [],
+                    )
+                  }
+                />
+                全选
+              </label>
+              <span className="muted">已选 {selectedOrderIds.length} / {orders.length}</span>
+              <button type="button" className="btn" onClick={() => setSelectedOrderIds([])}>
+                清空勾选
+              </button>
+              <button type="button" className="btn" onClick={sendSelectedToInbound}>
+                进库所选
+              </button>
+              <button type="button" className="btn btn-danger" onClick={() => void onCancelSelectedOrders()}>
+                取消所选
+              </button>
+            </div>
+          )}
+          <div className="order-table">
+            <div className="order-table-head">
+              <span />
+              <span>订单号</span>
+              <span>状态</span>
+              <span>店铺</span>
+              <span>IP</span>
+              <span>商品¥</span>
+              <span>运费¥</span>
+              <span>合计¥</span>
+              <span>预计发货</span>
+              <span />
+            </div>
+            {orders.length === 0 ? (
+              <div className="empty">暂无订单</div>
+            ) : (
+              orders.map((order) => (
+                <OrderCard
+                  key={order.id}
+                  order={order}
+                  selected={selectedOrderIds.includes(order.id)}
+                  expanded={expandedOrderIds.includes(order.id)}
+                  onToggleSelect={() => toggleOrderSelected(order.id)}
+                  onToggleExpand={() => toggleOrderExpanded(order.id)}
+                  onEnsureExpanded={() => {
+                    if (!expandedOrderIds.includes(order.id)) {
+                      toggleOrderExpanded(order.id);
+                    }
+                  }}
+                  onBarcode={(id, barcode) => void onUpdateLine(id, { barcode })}
+                  onQty={(id, qty) => void onUpdateLine(id, { qty })}
+                  onCancelLine={(id) => void onUpdateLine(id, { status: "cancelled" })}
+                  onShippingFee={(fee) =>
+                    void updateOrder(order.id, { shipping_fee: fee })
+                      .then(() => refresh())
+                      .catch((err) => setError(errorText(err)))
+                  }
+                  onOrderRef={(orderRef) =>
+                    void updateOrder(order.id, { order_ref: orderRef })
+                      .then(() => refresh())
+                      .catch((err) => setError(errorText(err)))
+                  }
+                />
+              ))
+            )}
+          </div>
+        </section>
+      )}
+
+      {tab === "requests" && (
+        <section className="panel">
+          <p className="muted">
+            顾客通过 /apply 提交的申请。确认下单后可回填店铺注文番号，并可选生成库存订单。
+          </p>
+          <div className="toolbar">
+            <label>
+              状态
+              <select
+                value={requestStatusFilter}
+                onChange={(e) => setRequestStatusFilter(e.target.value)}
+              >
+                <option value="">全部</option>
+                <option value="submitted">已提交</option>
+                <option value="ordered">已下单</option>
+                <option value="rejected">已拒绝</option>
+              </select>
+            </label>
+            <button type="button" className="btn" onClick={() => void loadOrderRequests()}>
+              刷新
+            </button>
+          </div>
+          {orderRequests.length === 0 ? (
+            <div className="empty">暂无申请单</div>
+          ) : (
+            <div className="request-list">
+              {orderRequests.map((req) => {
+                const draft = confirmDraft[req.id] || {
+                  shop_order_ref: req.shop_order_ref || "",
+                  staff_note: req.staff_note || "",
+                  create_stock: true,
+                };
+                return (
+                  <article className="request-card" key={req.id}>
+                    <header>
+                      <div className="request-main">
+                        {req.image_url ? (
+                          <img
+                            className="thumb"
+                            src={req.image_url}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <span className="thumb placeholder" />
+                        )}
+                        <div>
+                          <strong>{req.name}</strong>
+                          <p className="muted">
+                            {req.request_code} · ×{req.qty}
+                            {req.shop ? ` · ${req.shop}` : ""}
+                            {req.unit_cost != null ? ` · ¥${req.unit_cost}` : ""}
+                          </p>
+                          {req.source_url ? (
+                            <a href={req.source_url} target="_blank" rel="noreferrer">
+                              原链接
+                            </a>
+                          ) : null}
+                        </div>
+                      </div>
+                      <span className={`pill status-${req.status}`}>
+                        {REQUEST_STATUS_LABEL[req.status]}
+                      </span>
+                    </header>
+                    <div className="request-meta muted">
+                      {req.contact ? <span>ID：{req.contact}</span> : null}
+                      {req.note ? <span>顾客备注：{req.note}</span> : null}
+                      <span>提交：{formatDate(req.created_at)}</span>
+                      {req.stock_order_id ? (
+                        <span>库存订单 #{req.stock_order_id}</span>
+                      ) : null}
+                      {req.shop_order_ref ? (
+                        <span>注文：{req.shop_order_ref}</span>
+                      ) : null}
+                      {req.reject_reason ? (
+                        <span className="error">拒绝：{req.reject_reason}</span>
+                      ) : null}
+                    </div>
+                    {req.status === "submitted" ? (
+                      <div className="request-actions">
+                        <label>
+                          店铺注文番号
+                          <input
+                            value={draft.shop_order_ref}
+                            onChange={(e) =>
+                              setConfirmDraft((cur) => ({
+                                ...cur,
+                                [req.id]: { ...draft, shop_order_ref: e.target.value },
+                              }))
+                            }
+                            placeholder="日本站订单号"
+                          />
+                        </label>
+                        <label>
+                          备注（顾客可见）
+                          <input
+                            value={draft.staff_note}
+                            onChange={(e) =>
+                              setConfirmDraft((cur) => ({
+                                ...cur,
+                                [req.id]: { ...draft, staff_note: e.target.value },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="check">
+                          <input
+                            type="checkbox"
+                            checked={draft.create_stock}
+                            onChange={(e) =>
+                              setConfirmDraft((cur) => ({
+                                ...cur,
+                                [req.id]: {
+                                  ...draft,
+                                  create_stock: e.target.checked,
+                                },
+                              }))
+                            }
+                          />
+                          同时生成库存订单
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => void onConfirmRequest(req)}
+                        >
+                          确认已下单
+                        </button>
+                        <label>
+                          拒绝原因
+                          <input
+                            value={rejectDraft[req.id] || ""}
+                            onChange={(e) =>
+                              setRejectDraft((cur) => ({
+                                ...cur,
+                                [req.id]: e.target.value,
+                              }))
+                            }
+                            placeholder="缺货 / 链接无效…"
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="btn btn-danger"
+                          onClick={() => void onRejectRequest(req)}
+                        >
+                          拒绝
+                        </button>
+                      </div>
+                    ) : null}
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === "scrape" && (
+        <section className="panel">
+          <p className="muted">
+            支持批量粘贴多个商品/系列/店铺链接（每行一个，也可用逗号分隔）。
+            zozo.jp：商品页或「注文内容の詳細」整页源代码可粘贴抓取（订单列表页请改开详情）。
+            结果会累加到同一清单；勾选后点「导入为一笔订单」。
+          </p>
+          <div className="scrape-bar scrape-bar-batch">
+            <label className="grow">
+              URL 列表 / 页面 HTML
+              <textarea
+                rows={5}
+                value={scrapeUrlValue}
+                onChange={(e) => setScrapeUrlValue(e.target.value)}
+                placeholder={"每行一个链接，或粘贴整页 HTML（zozo 等）\nhttps://jumpcs.shueisha.co.jp/shop/g/g4530430540549/\nhttps://animegood.shop/products/xxx"}
+              />
+            </label>
+            <div className="scrape-actions">
+              <button type="button" className="btn btn-primary" disabled={scrapeBusy} onClick={() => void onScrape()}>
+                {scrapeBusy
+                  ? "抓取中…"
+                  : looksLikeHtmlDocument(scrapeUrlValue)
+                    ? "解析 HTML"
+                    : `批量抓取（${parseScrapeUrls(scrapeUrlValue).length || 0}）`}
+              </button>
+              {collection.length > 0 && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setCollection([]);
+                    setCollectionPick([]);
+                    setCollectionQty({});
+                    setCollectionPrice({});
+                    setCollectionBarcode({});
+                  }}
+                >
+                  清空清单
+                </button>
+              )}
+            </div>
+          </div>
+          {collection.length > 0 && (
+            <div className="collection-box">
+              <div className="form-grid">
+                <label>订单号（共用）<input value={scrapeOrderRef} onChange={(e) => setScrapeOrderRef(e.target.value)} placeholder="留空则自动生成" /></label>
+                <label>下单数量（整单）<input type="number" min={1} value={scrapeOrderQty} onChange={(e) => setScrapeOrderQty(e.target.value)} placeholder="可留空=数量合计" /></label>
+                <label>运费（JPY）<input type="number" min={0} step="1" value={scrapeShippingFee} onChange={(e) => setScrapeShippingFee(e.target.value)} placeholder="整单运费" /></label>
+                <label>共用预计发货月<input type="month" value={batchExpectedShip} onChange={(e) => setBatchExpectedShip(e.target.value)} /></label>
+                <label>共用上中下旬<select value={batchExpectedPeriod} disabled={!batchExpectedShip} onChange={(e) => setBatchExpectedPeriod(e.target.value as "" | ExpectedShipPeriod)}><option value="">整月</option><option value="early">上旬</option><option value="mid">中旬</option><option value="late">下旬</option></select></label>
+              </div>
+              <div className="toolbar">
+                <span className="muted">清单 {collection.length} 条，已选 {collectionPick.length} → 将导入为 1 笔订单</span>
+                <button type="button" className="btn" onClick={() => setCollectionPick(collection.map((_, index) => index))}>全选</button>
+                <button type="button" className="btn" onClick={() => setCollectionPick([])}>取消勾选</button>
+                <button type="button" className="btn btn-primary" onClick={() => void onBatchCreate()}>导入为一笔订单</button>
+              </div>
+              <div className="collection-list">
+                {collection.map((product, index) => (
+                  <div className="collection-row" key={`${product.source_url}-${index}`}>
+                    <label className="collection-main">
+                      <input type="checkbox" checked={collectionPick.includes(index)} onChange={() => setCollectionPick((current) => current.includes(index) ? current.filter((value) => value !== index) : [...current, index])} />
+                      {product.image_url ? <img className="thumb" src={product.image_url} alt="" referrerPolicy="no-referrer" /> : <span className="thumb placeholder" />}
+                      <span>
+                        <strong>{product.name}</strong>
+                        <span className="muted">
+                          {" "}
+                          · {product.shop}
+                          {product.unit_cost != null
+                            ? ` · ¥${product.unit_cost}`
+                            : " · 无标价"}
+                          {product.expected_ship_at
+                            ? ` · ${formatExpectedShip(product.expected_ship_at, product.expected_ship_period)}`
+                            : ""}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="collection-qty">
+                      单价
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={collectionPrice[index] ?? ""}
+                        disabled={!collectionPick.includes(index)}
+                        placeholder="JPY"
+                        onChange={(e) =>
+                          setCollectionPrice({
+                            ...collectionPrice,
+                            [index]: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="collection-qty">
+                      JAN
+                      <input
+                        className="collection-jan"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]{8}|[0-9]{13}"
+                        maxLength={13}
+                        value={collectionBarcode[index] ?? ""}
+                        disabled={!collectionPick.includes(index)}
+                        placeholder="8/13位"
+                        title="仅接受校验通过的 JAN/EAN（8 或 13 位）"
+                        onChange={(e) =>
+                          setCollectionBarcode({
+                            ...collectionBarcode,
+                            [index]: e.target.value.replace(/\D/g, "").slice(0, 13),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="collection-qty">数量<input type="number" min={1} value={collectionQty[index] || "1"} disabled={!collectionPick.includes(index)} onChange={(e) => setCollectionQty({ ...collectionQty, [index]: e.target.value })} /></label>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
+
+      {tab === "inbound" && (
+        <section className="panel">
+          <p className="muted">
+            勾选待进库行后点「确认进库」，直接变为在库。快递单号可选；多笔订单同时进库时请留空单号。
+          </p>
+          <h2>待进库</h2>
+          <div className="item-pick">
+            {inboundLines.length === 0 ? (
+              <div className="empty">没有可进库的订单行</div>
+            ) : (
+              groupLines(inboundLines).map(([orderId, group]) => {
+                const ids = group.lines.map((line) => line.id);
+                const orderChecked =
+                  ids.length > 0 &&
+                  ids.every((id) => selectedInboundIds.includes(id));
+                return (
+                  <div className="order-sub" key={orderId}>
+                    <label className="order-sub-check">
+                      <input
+                        type="checkbox"
+                        checked={orderChecked}
+                        onChange={() => toggleInboundOrderAll(orderId)}
+                      />
+                      <strong>{group.orderRef}</strong>
+                    </label>
+                    {group.lines.map((line) => (
+                      <label key={line.id}>
+                        <input
+                          type="checkbox"
+                          checked={selectedInboundIds.includes(line.id)}
+                          onChange={() => toggleInboundLine(line.id)}
+                        />
+                        {line.image_url ? (
+                          <img
+                            className="thumb"
+                            src={line.image_url}
+                            alt=""
+                            referrerPolicy="no-referrer"
+                          />
+                        ) : (
+                          <span className="thumb placeholder" />
+                        )}
+                        <span>
+                          {line.name}
+                          <span className="muted"> · x{line.qty}</span>
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                );
+              })
+            )}
+          </div>
+          <div className="form-grid">
+            <CarrierSelect
+              value={inboundCarrier}
+              onChange={setInboundCarrier}
+            />
+            <label>
+              快递单号
+              <input
+                value={inboundTrackingNo}
+                placeholder="可选"
+                onChange={(e) => setInboundTrackingNo(e.target.value)}
+              />
+            </label>
+          </div>
+          <div className="toolbar">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void onConfirmInboundToStock()}
+            >
+              确认进库（已选 {selectedInboundIds.length}）
+            </button>
+          </div>
+
+          {shipments.length > 0 && (
+            <>
+              <div className="toolbar">
+                <h2>历史待确认</h2>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void onConfirmAllInbound()}
+                >
+                  一键确认全部（{shipments.length}）
+                </button>
+              </div>
+              <p className="muted">旧流程遗留的「已发往仓库」包裹，确认后变为在库。</p>
+              {shipments.map((shipment) => (
+                <article className="ship-card" key={shipment.id}>
+                  <header>
+                    <div>
+                      <strong className="mono">
+                        {shipment.tracking_no || "无单号"}
+                      </strong>{" "}
+                      · {CARRIER_LABEL[shipment.carrier]}
+                      <div className="muted">发货 {formatDate(shipment.shipped_at)}</div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void onConfirmInbound(shipment.id)}
+                    >
+                      确认到仓
+                    </button>
+                  </header>
+                  <OrderGroups
+                    groups={shipment.order_groups}
+                    fallback={shipment.items}
+                    barcode={(id, value) => void onUpdateLine(id, { barcode: value })}
+                  />
+                </article>
+              ))}
+            </>
+          )}
+        </section>
+      )}
+
+      {tab === "outbound" && (
+        <section className="panel">
+          <p className="muted">勾选任一行会自动选择该订单全部在库行。一个批次可有多个箱子，每箱可混装多个订单。</p>
+          <h2>1. 选择完整订单</h2>
+          <div className="item-pick">
+            {stockLines.length === 0 ? <div className="empty">没有可出库的在库货品</div> : groupLines(stockLines).map(([orderId, group]) => (
+              <div className="order-sub" key={orderId}>
+                <strong>{group.orderRef}</strong>
+                {group.lines.map((line) => (
+                  <label key={line.id} className={assignedIds.has(line.id) ? "source-disabled" : ""}>
+                    <input type="checkbox" disabled={assignedIds.has(line.id)} checked={selectedStockIds.includes(line.id) || assignedIds.has(line.id)} onChange={() => toggleStockOrder(line)} />
+                    {line.image_url ? <img className="thumb" src={line.image_url} alt="" referrerPolicy="no-referrer" /> : <span className="thumb placeholder" />}
+                    <span>{line.name}<span className="muted"> · x{line.qty}{assignedIds.has(line.id) ? " · 已分箱" : ""}</span></span>
+                  </label>
+                ))}
+              </div>
+            ))}
+          </div>
+          <button type="button" className="btn btn-primary" onClick={addDraftBox}>把已选行分配到新箱（{selectedStockIds.length}）</button>
+
+          <h2>2. 编辑箱子</h2>
+          {draftBoxes.length === 0 ? <div className="empty">尚未创建箱子</div> : draftBoxes.map((box, index) => {
+            const lines = stockLines.filter((line) => box.item_ids.includes(line.id));
+            return (
+              <article className="box-card" key={`${box.box_no}-${index}`}>
+                <div className="form-grid">
+                  <label>箱号<input type="number" min={1} value={box.box_no} onChange={(e) => updateDraftBox(index, { box_no: Number(e.target.value) || 1 })} /></label>
+                  <CarrierSelect value={box.carrier} onChange={(value) => updateDraftBox(index, { carrier: value })} />
+                  <label>快递单号 *<input value={box.tracking_no} onChange={(e) => updateDraftBox(index, { tracking_no: e.target.value })} /></label>
+                </div>
+                {groupLines(lines).map(([orderId, group]) => (
+                  <div className="order-sub" key={orderId}>
+                    <strong>{group.orderRef}</strong>
+                    <ul>{group.lines.map((line) => <li key={line.id}>{line.name} · x{line.qty} <button type="button" className="btn btn-danger" onClick={() => removeDraftLine(index, line.id)}>移出</button></li>)}</ul>
+                  </div>
+                ))}
+              </article>
+            );
+          })}
+          <label className="inline-filter">批次备注<input value={batchNote} onChange={(e) => setBatchNote(e.target.value)} /></label>
+          <button type="button" className="btn btn-primary" onClick={() => void onCreateOutbound()}>创建出库批次（{draftBoxes.length} 箱）</button>
+
+          <h2>已有出库批次</h2>
+          {batches.length === 0 ? <div className="empty">暂无出库批次</div> : batches.map((batch) => (
+            <article className="ship-card" key={batch.id}>
+              <header>
+                <div><strong>批次 #{batch.id}</strong><span className="muted"> · {batch.box_count} 箱 · {batch.item_count} 行 · {formatDate(batch.created_at)}</span>{batch.note && <div>{batch.note}</div>}</div>
+                {batch.boxes.some((box) => box.status === "shipped") && <button type="button" className="btn btn-primary" onClick={() => void onConfirmBatch(batch.id)}>确认整批签收</button>}
+              </header>
+              {batch.boxes.map((box) => (
+                <div className="box-card" key={box.id}>
+                  <strong>箱 {box.box_no}</strong> · {CARRIER_LABEL[box.carrier]} · <span className="mono">{box.tracking_no}</span> · <span className={`badge ${box.status === "delivered" ? "delivered" : "outbound_shipped"}`}>{box.status === "delivered" ? "已签收" : "运输中"}</span>
+                  <OrderGroups groups={box.order_groups} fallback={box.items} />
+                </div>
+              ))}
+            </article>
+          ))}
+        </section>
+      )}
+
+      {tab === "logs" && (
+        <section className="panel">
+          <p className="muted">仅可撤回最近一步且尚未被后续状态变更影响的操作。</p>
+          {logs.length === 0 ? <div className="empty">暂无操作日志</div> : (
+            <div className="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>状态</th><th /></tr></thead><tbody>
+              {logs.map((log) => <tr key={log.id}><td className="muted">{formatDate(log.created_at)}</td><td>{log.summary}</td><td>{log.undone_at ? <span className="badge cancelled">已撤回</span> : log.undoable && latestLog?.id === log.id ? <span className="badge in_stock">可撤回</span> : "—"}</td><td>{log.undoable && latestLog?.id === log.id && <button type="button" className="btn" disabled={undoBusy} onClick={() => void onUndo(log.id)}>撤回</button>}</td></tr>)}
+            </tbody></table></div>
+          )}
+        </section>
+      )}
+    </div>
+  );
+}
+
+function OrderCard({
+  order,
+  selected,
+  expanded,
+  onToggleSelect,
+  onToggleExpand,
+  onEnsureExpanded,
+  onBarcode,
+  onQty,
+  onCancelLine,
+  onShippingFee,
+  onOrderRef,
+}: {
+  order: Order;
+  selected: boolean;
+  expanded: boolean;
+  onToggleSelect: () => void;
+  onToggleExpand: () => void;
+  onEnsureExpanded: () => void;
+  onBarcode: (id: number, value: string) => void;
+  onQty: (id: number, qty: number) => void;
+  onCancelLine: (id: number) => void;
+  onShippingFee: (fee: number | null) => void;
+  onOrderRef: (orderRef: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [feeDraft, setFeeDraft] = useState(
+    order.shipping_fee != null ? String(order.shipping_fee) : "0",
+  );
+  const [refDraft, setRefDraft] = useState(order.order_ref || "");
+  useEffect(() => {
+    setFeeDraft(order.shipping_fee != null ? String(order.shipping_fee) : "0");
+  }, [order.shipping_fee]);
+  useEffect(() => {
+    setRefDraft(order.order_ref || "");
+  }, [order.order_ref]);
+
+  const ipSummary = (() => {
+    const ips: string[] = [];
+    const seen = new Set<string>();
+    for (const line of order.lines) {
+      const ip = (line.ip || "").trim();
+      if (!ip || seen.has(ip)) continue;
+      seen.add(ip);
+      ips.push(ip);
+    }
+    return ips;
+  })();
+
+  function commitFee() {
+    const text = feeDraft.trim();
+    const next = text === "" ? 0 : Number(text);
+    const normalized = Number.isNaN(next) ? 0 : Math.max(0, next);
+    const prev = order.shipping_fee ?? 0;
+    if (normalized !== prev) onShippingFee(normalized);
+  }
+
+  function commitOrderRef() {
+    const next = refDraft.trim();
+    if (next !== (order.order_ref || "")) onOrderRef(next);
+  }
+
+  function startEditing() {
+    setRefDraft(order.order_ref || "");
+    setFeeDraft(
+      order.shipping_fee != null ? String(order.shipping_fee) : "0",
+    );
+    setEditing(true);
+    onEnsureExpanded();
+  }
+
+  function finishEditing() {
+    commitOrderRef();
+    commitFee();
+    setEditing(false);
+  }
+
+  return (
+    <article
+      className={`order-row${selected ? " selected" : ""}${editing ? " editing" : ""}`}
+    >
+      <div className="order-row-main">
+        <label className="order-check">
+          <input type="checkbox" checked={selected} onChange={onToggleSelect} />
+        </label>
+        {editing ? (
+          <label className="order-ref-inline order-cell-ref">
+            <input
+              className="mono"
+              value={refDraft}
+              placeholder={`#${order.id}`}
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setRefDraft(e.target.value)}
+              onBlur={commitOrderRef}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+            />
+          </label>
+        ) : (
+          <button
+            type="button"
+            className="order-ref-btn mono order-cell-ref"
+            onClick={onToggleExpand}
+          >
+            {order.order_ref || `#${order.id}`}
+          </button>
+        )}
+        <span className={`badge ${order.status} order-cell-status`}>
+          {STATUS_LABEL[order.status]}
+        </span>
+        <span className="ellipsis order-cell-shop" title={order.shop || ""}>
+          {order.shop || "—"}
+        </span>
+        <span
+          className="ellipsis order-cell-ip"
+          title={ipSummary.join(" / ") || "—"}
+        >
+          {ipSummary.length ? ipSummary.join(" / ") : "—"}
+          <span className="muted">
+            {" "}
+            · {order.line_count}行/{order.total_qty}件
+          </span>
+        </span>
+        <span className="order-cell-goods">
+          {order.goods_total != null ? order.goods_total : "—"}
+        </span>
+        {editing ? (
+          <label className="order-fee-inline order-cell-fee">
+            <input
+              type="number"
+              min={0}
+              step="1"
+              value={feeDraft}
+              placeholder="—"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setFeeDraft(e.target.value)}
+              onBlur={commitFee}
+            />
+          </label>
+        ) : (
+          <span className="order-cell-fee">
+            {order.shipping_fee != null ? order.shipping_fee : 0}
+          </span>
+        )}
+        <span className="strong order-cell-total">
+          {order.order_total != null ? order.order_total : "—"}
+        </span>
+        <span className="ellipsis order-cell-ship">
+          {order.expected_ship_at
+            ? formatExpectedShip(order.expected_ship_at, order.expected_ship_period)
+            : "—"}
+        </span>
+        <span className="order-row-actions">
+          {editing ? (
+            <button type="button" className="btn btn-primary" onClick={finishEditing}>
+              完成
+            </button>
+          ) : (
+            <button type="button" className="btn" onClick={startEditing}>
+              编辑
+            </button>
+          )}
+          <button type="button" className="btn" onClick={onToggleExpand}>
+            {expanded ? "收起" : "明细"}
+          </button>
+        </span>
+      </div>
+      {expanded && (
+        <div className="order-row-detail">
+          <div className="order-detail-meta">
+            {order.order_image_url && (
+              <a href={order.order_image_url} target="_blank" rel="noreferrer" className="order-shot-mini-link">
+                <img className="order-shot-mini" src={order.order_image_url} alt="订单截图" referrerPolicy="no-referrer" />
+              </a>
+            )}
+            {order.note && <span className="muted">备注：{order.note}</span>}
+            {!editing && (
+              <span className="muted">点「编辑」后可改订单号 / 运费 / 数量 / 条码</span>
+            )}
+          </div>
+          {order.lines.map((line) => (
+            <div className="order-line-compact" key={line.id}>
+              {line.image_url ? (
+                <img src={line.image_url} className="thumb-sm" alt="" referrerPolicy="no-referrer" />
+              ) : (
+                <span className="thumb-sm placeholder" />
+              )}
+              <span className="ellipsis" title={line.name}>{line.name}</span>
+              {editing ? (
+                <QtyInput value={line.qty} onSave={(qty) => onQty(line.id, qty)} />
+              ) : (
+                <span>x{line.qty}</span>
+              )}
+              <span>{line.unit_cost != null ? `¥${line.unit_cost}` : "—"}</span>
+              <span className="ellipsis">{line.ip || "—"}</span>
+              <span className={`badge ${line.status}`}>{STATUS_LABEL[line.status]}</span>
+              <BarcodeInput
+                value={line.barcode || ""}
+                editable={editing}
+                onSave={(value) => onBarcode(line.id, value)}
+              />
+              {line.source_url ? (
+                <a className="link" href={line.source_url} target="_blank" rel="noreferrer">链接</a>
+              ) : (
+                <span />
+              )}
+              {editing &&
+              line.status !== "cancelled" &&
+              line.status !== "delivered" ? (
+                <button type="button" className="btn btn-danger" onClick={() => onCancelLine(line.id)}>
+                  取消行
+                </button>
+              ) : (
+                <span />
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </article>
+  );
+}
+
+function CarrierSelect({
+  value,
+  onChange,
+}: {
+  value: Carrier;
+  onChange: (value: Carrier) => void;
+}) {
+  return (
+    <label>
+      承运商
+      <select value={value} onChange={(e) => onChange(e.target.value as Carrier)}>
+        <option value="yamato">Yamato</option>
+        <option value="sagawa">佐川急便</option>
+        <option value="other">其他</option>
+      </select>
+    </label>
+  );
+}
+
+function QtyInput({
+  value,
+  onSave,
+}: {
+  value: number;
+  onSave: (qty: number) => void;
+}) {
+  const [draft, setDraft] = useState(String(value));
+  useEffect(() => setDraft(String(value)), [value]);
+  return (
+    <input
+      className="cell-qty"
+      type="number"
+      min={1}
+      step={1}
+      value={draft}
+      onChange={(e) => setDraft(e.target.value)}
+      onBlur={() => {
+        const next = Math.max(1, Math.floor(Number(draft) || 1));
+        setDraft(String(next));
+        if (next !== value) onSave(next);
+      }}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          (e.target as HTMLInputElement).blur();
+        }
+      }}
+    />
+  );
+}
+
+function BarcodeInput({
+  value,
+  onSave,
+  editable = true,
+}: {
+  value: string;
+  onSave: (value: string) => void;
+  editable?: boolean;
+}) {
+  const [draft, setDraft] = useState(value);
+  useEffect(() => setDraft(value), [value]);
+  return (
+    <input
+      className={`cell-barcode${editable ? "" : " readonly"}`}
+      placeholder={editable ? "到货后补条形码" : "—"}
+      value={draft}
+      readOnly={!editable}
+      disabled={!editable}
+      onChange={(e) => {
+        if (!editable) return;
+        setDraft(e.target.value);
+      }}
+      onBlur={() => {
+        if (!editable) return;
+        if (draft.trim() !== value) onSave(draft.trim());
+      }}
+    />
+  );
+}
+
+function OrderGroups({
+  groups,
+  fallback,
+  barcode,
+}: {
+  groups?: { order_id: number | null; order_ref: string; items: Shipment["items"] }[];
+  fallback: Shipment["items"];
+  barcode?: (id: number, value: string) => void;
+}) {
+  const normalized = groups?.length
+    ? groups
+    : [{ order_id: null, order_ref: "未分组订单", items: fallback }];
+  return (
+    <>
+      {normalized.map((group, index) => (
+        <div className="order-sub" key={`${group.order_id ?? "none"}-${index}`}>
+          <strong>{group.order_ref || "无订单号"}</strong>
+          <ul className={barcode ? "ship-items" : undefined}>
+            {group.items.map((item) => (
+              <li key={item.id}>
+                <span>{item.name}<span className="muted"> · {item.shop || "无店铺"} · x{item.qty}</span></span>
+                {barcode && <BarcodeInput value={item.barcode || ""} onSave={(value) => barcode(item.id, value)} />}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </>
+  );
+}

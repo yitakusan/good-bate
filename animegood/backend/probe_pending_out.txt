@@ -1,0 +1,44 @@
+=== hakuichi https://hakuichi.jp/products/list.php status=200 ===
+title=【公式】HAKUICHI STYLE｜箔一の金箔工芸品・食品・箔材料一覧
+sample_links=['/products/list.php?categories=4', 'https://hakuichi.jp/products/list.php?categories=161', '/products/list.php?categories=157', '/products/list.php?categories=492', '/products/list.php?category_id=1001', '/products/list.php?categories=41', '/products/list.php?categories=122', '/products/list.php?categories=43', '/products/list.php?categories=46', '/products/list.php', '/products/list.php?categories=340', '/products/list.php?category_id=351']
+patterns={'detail_num': [], 'detail_path': [], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== asobi https://shop.asobistore.jp/ status=200 ===
+title=アソビストアショッピングページ ｜バンダイナムコエンターテインメント公式エンタメコマースサイト
+sample_links=['/product/search', '/globalnavi/sitemap', '/feature/sc_birthday_2025-2026?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_sc_birthdaygoods_10_11', '/products/detail/243711-00-00-00?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_gkmas_misuzu_kotobukiya', '/feature/toarise_5thanniversarygoods?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_toarise_5thanniv_goods', '/feature/tof2026_memorial?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_tof2026_memorial_goods', '/feature/cg_musical_dd_memorial?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_cg_dd_memorial_goods', '/feature/animalish7?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_id7_animalish7_goods', '/feature/283pro_sololive_msp_p?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_sc_msp_kyosangoods', '/feature/283pro_sololive_msp?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_sc_msp_goods_pre_final', '/product/catalog/s/older/t/category/ca/cgmr_ptb_ec/n/120#a1?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_cg_ptb_goods_limited', '/feature/theaterdays_9th/?utm_source=ec_top_banner&utm_medium=ec_toppage&utm_campaign=ectop_banner_ml_9thanniv_akihabara_goods']
+patterns={'detail_num': ['241489', '242896', '243307', '243468', '243484'], 'detail_path': ['/products/detail/241489-00-00-s004', '/products/detail/242896-i7_unit_01-00-00', '/products/detail/243307-00-00-00', '/products/detail/243468-00-00-00', '/products/detail/243484-7_gk-c006-00-00'], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== kadokawa https://store.kadokawa.co.jp/ status=200 ===
+title=カドスト | KADOKAWA公式オンラインショップ
+sample_links=['/shop/topic/topicdetaillist.aspx?category=0']
+patterns={'detail_num': [], 'detail_path': [], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== miraithings https://miraithings.com/ status=200 ===
+title=mirai things Online Store （ミライシングス） | 
+sample_links=[]
+patterns={'detail_num': [], 'detail_path': [], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== pricafe https://pricafe.shop/ status=200 ===
+title=アニメ・キャラグッズ専門の通販サイト｜プリンセスカフェショップオンライン公式
+sample_links=['https://www.pricafe.shop/view/category/all_items', 'https://www.pricafe.shop/view/category/all_items', '/view/item/000000015080', '/view/item/000000015080', '/view/item/000000015066', '/view/item/000000015066', '/view/item/000000015083', '/view/item/000000015083', '/view/item/000000015070', '/view/item/000000015070', '/view/item/000000015078', '/view/item/000000015078']
+patterns={'detail_num': [], 'detail_path': [], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== i-rights https://i-rightsshop.com/ status=200 ===
+title=アイライツ online shop
+sample_links=['/hpgen/HPB/shop/sitemap.html']
+patterns={'detail_num': [], 'detail_path': [], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== medicos https://medicos-e-shop.net/products/list status=200 ===
+title=全商品 / MEDICOS ONLINE SHOP
+sample_links=['https://medicos-e-shop.net/products/list?category_id=2000', 'https://medicos-e-shop.net/products/list?category_id=2001', 'https://medicos-e-shop.net/products/list?category_id=2002', 'https://medicos-e-shop.net/products/list?category_id=2003', 'https://medicos-e-shop.net/products/list?category_id=2004', 'https://medicos-e-shop.net/products/list?category_id=2005', 'https://medicos-e-shop.net/products/list?category_id=2007', 'https://medicos-e-shop.net/products/list?category_id=2008', 'https://medicos-e-shop.net/products/list?category_id=2009', 'https://medicos-e-shop.net/products/list?category_id=2010', 'https://medicos-e-shop.net/products/list?category_id=2834', 'https://medicos-e-shop.net/products/list?category_id=2835']
+patterns={'detail_num': ['40439', '40440', '40606', '40607', '40608'], 'detail_path': ['/products/detail/40439', '/products/detail/40440', '/products/detail/40606', '/products/detail/40607', '/products/detail/40608'], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== vvstore https://vvstore.jp/products/list status=200 ===
+title=おもしろ7,566品 / vvstore
+sample_links=['https://vvstore.jp/products/list?from=hamburgermenu&stock[]=1&sale[]=1', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10001', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10002', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10000', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10003', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10004', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10005', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10006', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10007', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10008', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10009', 'https://vvstore.jp/products/list?from=hamburgermenu&category_id=10010']
+patterns={'detail_num': ['188388', '188389', '188390', '188391', '313693'], 'detail_path': ['/products/detail/${p.id}', '/products/detail/188388', '/products/detail/188389', '/products/detail/188390', '/products/detail/188391'], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
+
+=== internetangel https://internetangel.base.shop/items/all status=200 ===
+title=BASE (ベイス) -無料で簡単なネットショップ作成サービス
+sample_links=[]
+patterns={'detail_num': [], 'detail_path': [], 'fs_goods': [], 'base_items': [], 'ocnk': False, 'colorme': False}
