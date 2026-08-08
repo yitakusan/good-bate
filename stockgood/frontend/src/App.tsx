@@ -1572,6 +1572,44 @@ export default function App() {
     return stockBoxes.find((b) => String(b.id) === inventoryBoxFilter) || null;
   }, [inventoryBoxFilter, stockBoxes]);
 
+  /** Main boxes first; each child listed indented under its parent. */
+  const inventoryBoxSelectOptions = useMemo(() => {
+    const mains = stockBoxes
+      .filter((b) => b.parent_id == null)
+      .slice()
+      .sort((a, b) => a.box_no - b.box_no || a.id - b.id);
+    const byParent = new Map<number, typeof stockBoxes>();
+    for (const box of stockBoxes) {
+      if (box.parent_id == null) continue;
+      const list = byParent.get(box.parent_id) || [];
+      list.push(box);
+      byParent.set(box.parent_id, list);
+    }
+    for (const list of byParent.values()) {
+      list.sort((a, b) => a.box_no - b.box_no || a.id - b.id);
+    }
+    const rows: { box: (typeof stockBoxes)[number]; kind: "main" | "child" }[] =
+      [];
+    const seen = new Set<number>();
+    for (const main of mains) {
+      rows.push({ box: main, kind: "main" });
+      seen.add(main.id);
+      for (const child of byParent.get(main.id) || []) {
+        rows.push({ box: child, kind: "child" });
+        seen.add(child.id);
+      }
+    }
+    // Orphan children (parent missing) — still show, indented
+    for (const box of stockBoxes) {
+      if (seen.has(box.id)) continue;
+      rows.push({
+        box,
+        kind: box.parent_id != null ? "child" : "main",
+      });
+    }
+    return rows;
+  }, [stockBoxes]);
+
   const missingBarcodeLines = useMemo(
     () => stockLines.filter((line) => !(line.barcode || "").trim()),
     [stockLines],
@@ -2612,19 +2650,27 @@ export default function App() {
               >
                 <option value="all">全部在库</option>
                 <option value="unboxed">未合箱</option>
-                {stockBoxes.map((box) => (
-                  <option key={box.id} value={String(box.id)}>
-                    {box.parent_box_no != null
-                      ? `　└ #${box.box_no}（子箱→主箱 #${box.parent_box_no}）`
-                      : `#${box.box_no}${box.child_boxes?.length ? "（主箱）" : ""}`}
-                    {box.note ? ` · ${box.note}` : " · 无备注"}
-                    {`（${box.order_count} 单`}
-                    {box.child_boxes?.length
-                      ? ` + ${box.child_boxes.length} 子箱`
-                      : ""}
-                    ）
-                  </option>
-                ))}
+                {inventoryBoxSelectOptions.map(({ box, kind }) => {
+                  const note = box.note ? ` · ${box.note}` : " · 无备注";
+                  const counts = `（${box.order_count} 单）`;
+                  if (kind === "child") {
+                    return (
+                      <option key={box.id} value={String(box.id)}>
+                        {`　└ 子箱 #${box.box_no}${note}${counts}`}
+                      </option>
+                    );
+                  }
+                  const childCount = box.child_boxes?.length ?? 0;
+                  const mainTag =
+                    childCount > 0
+                      ? `（主箱 · ${childCount} 子箱）`
+                      : "";
+                  return (
+                    <option key={box.id} value={String(box.id)}>
+                      {`#${box.box_no}${mainTag}${note}${counts}`}
+                    </option>
+                  );
+                })}
               </select>
             </label>
           </div>
