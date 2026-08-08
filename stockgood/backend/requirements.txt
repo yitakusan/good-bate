@@ -4,3 +4,4 @@ pydantic
 pydantic-settings
 httpx
 beautifulsoup4
+openpyxl

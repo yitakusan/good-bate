@@ -5,12 +5,14 @@ from typing import AsyncIterator, Optional
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 from app.admin_auth import admin_auth_required, require_admin
 from app.database import DATA_DIR, init_db
 from app.models import (
     ActionLogOut,
+    FinanceSummaryOut,
     InboundCreate,
     ItemBatchCreate,
     ItemCreate,
@@ -26,21 +28,28 @@ from app.models import (
     OrderRequestReject,
     OrderUpdate,
     OutboundBatchCreate,
+    OutboundBatchFinanceUpdate,
     OutboundBatchOut,
     ScrapeRequest,
     ScrapeResult,
     ShipmentCreate,
     ShipmentOut,
     StatsOut,
+    StockBoxCreate,
+    StockBoxOrdersPayload,
+    StockBoxOut,
+    StockBoxUpdate,
 )
 from app.rate_limit import rate_limit
 from app.scrapers.preview import scrape_html_document, scrape_url
 from app.services import action_log as action_log_svc
+from app.services import finance as finance_svc
 from app.services import items as items_svc
 from app.services import order_requests as order_requests_svc
 from app.services import orders as orders_svc
 from app.services import outbound_batches as outbound_svc
 from app.services import shipments as shipments_svc
+from app.services import stock_boxes as stock_boxes_svc
 from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
@@ -54,7 +63,9 @@ OPENAPI_TAGS = [
     {"name": "货品", "description": "货品清单与批量创建"},
     {"name": "抓取", "description": "商品链接或页面 HTML 解析"},
     {"name": "进库", "description": "运单进库与到仓确认"},
+    {"name": "库存合箱", "description": "在库订单合箱（不改变状态，与出库打包独立）"},
     {"name": "出库", "description": "出库批次与签收确认"},
+    {"name": "财务", "description": "下单汇率、出库应收/已收与月度汇总"},
     {"name": "操作日志", "description": "可撤销的写操作记录"},
 ]
 
@@ -527,6 +538,114 @@ def confirm_shipment(
 
 
 @app.get(
+    "/api/stock-boxes",
+    response_model=list[StockBoxOut],
+    tags=["库存合箱"],
+    summary="库存合箱列表",
+)
+def list_stock_boxes() -> list[dict]:
+    """在库合箱组（不走出库、不改货品状态）。"""
+    return stock_boxes_svc.list_boxes()
+
+
+@app.post(
+    "/api/stock-boxes",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="创建库存合箱",
+)
+def create_stock_box(
+    payload: StockBoxCreate, _: None = Depends(require_admin)
+) -> dict:
+    """将在库订单编入库存箱；不改变订单/货品状态。"""
+    return stock_boxes_svc.create_box(
+        order_ids=payload.order_ids,
+        note=payload.note,
+        box_no=payload.box_no,
+    )
+
+
+@app.post(
+    "/api/stock-boxes/combine",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="合并订单到同一库存箱",
+)
+def combine_stock_box(
+    payload: StockBoxCreate, _: None = Depends(require_admin)
+) -> dict:
+    """所选在库订单并入同一库存箱（可复用已有箱）；不改状态。"""
+    return stock_boxes_svc.combine_orders(
+        order_ids=payload.order_ids, note=payload.note
+    )
+
+
+@app.get(
+    "/api/stock-boxes/{box_id}",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="库存合箱详情",
+)
+def get_stock_box(box_id: int) -> dict:
+    return stock_boxes_svc.get_box(box_id)
+
+
+@app.patch(
+    "/api/stock-boxes/{box_id}",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="更新库存合箱",
+)
+def update_stock_box(
+    box_id: int, payload: StockBoxUpdate, _: None = Depends(require_admin)
+) -> dict:
+    return stock_boxes_svc.update_box(
+        box_id, note=payload.note, box_no=payload.box_no
+    )
+
+
+@app.post(
+    "/api/stock-boxes/{box_id}/orders",
+    response_model=StockBoxOut,
+    tags=["库存合箱"],
+    summary="合箱加入订单",
+)
+def add_stock_box_orders(
+    box_id: int,
+    payload: StockBoxOrdersPayload,
+    _: None = Depends(require_admin),
+) -> dict:
+    return stock_boxes_svc.add_orders(box_id, payload.order_ids)
+
+
+@app.post(
+    "/api/stock-boxes/{box_id}/remove-orders",
+    response_model=Optional[StockBoxOut],
+    tags=["库存合箱"],
+    summary="合箱移出订单",
+)
+def remove_stock_box_orders(
+    box_id: int,
+    payload: StockBoxOrdersPayload,
+    _: None = Depends(require_admin),
+) -> Optional[dict]:
+    """移出后若箱空则自动删除并返回 null。"""
+    return stock_boxes_svc.remove_orders(box_id, payload.order_ids)
+
+
+@app.delete(
+    "/api/stock-boxes/{box_id}",
+    tags=["库存合箱"],
+    summary="解散库存合箱",
+)
+def delete_stock_box(
+    box_id: int, _: None = Depends(require_admin)
+) -> dict[str, bool]:
+    stock_boxes_svc.delete_box(box_id)
+    return {"ok": True}
+
+
+@app.get(
     "/api/outbound-batches",
     response_model=list[OutboundBatchOut],
     tags=["出库"],
@@ -548,10 +667,15 @@ def list_outbound_batches(
 def create_outbound_batch(
     payload: OutboundBatchCreate, _: None = Depends(require_admin)
 ) -> dict:
-    """按箱子创建出库批次（每箱运单号 + 货品）。"""
+    """按箱子创建出库批次（每箱运单号 + 货品）。创建时锁定货款应收。"""
     return outbound_svc.create_batch(
         boxes=[b.model_dump() for b in payload.boxes],
         note=payload.note,
+        allow_missing_barcode=payload.allow_missing_barcode,
+        missing_barcode_note=payload.missing_barcode_note,
+        freight_exchange_rate=payload.freight_exchange_rate,
+        freight_unit_price_jpy=payload.freight_unit_price_jpy,
+        chargeable_weight=payload.chargeable_weight,
     )
 
 
@@ -564,6 +688,58 @@ def create_outbound_batch(
 def get_outbound_batch(batch_id: int) -> dict:
     """按 ID 获取出库批次。"""
     return outbound_svc.get_batch(batch_id)
+
+
+@app.patch(
+    "/api/outbound-batches/{batch_id}/finance",
+    response_model=OutboundBatchOut,
+    tags=["财务"],
+    summary="更新出库批次财务（国际运费 / 已收款）",
+)
+def update_outbound_batch_finance(
+    batch_id: int,
+    payload: OutboundBatchFinanceUpdate,
+    _: None = Depends(require_admin),
+) -> dict:
+    """更新国际运费字段或登记已收款。"""
+    return outbound_svc.update_finance(
+        batch_id, payload.model_dump(exclude_unset=True)
+    )
+
+
+@app.get(
+    "/api/outbound-batches/{batch_id}/fee-detail.xlsx",
+    tags=["财务"],
+    summary="导出发货费用明细 Excel",
+)
+def export_outbound_fee_detail(
+    batch_id: int, _: None = Depends(require_admin)
+) -> Response:
+    """导出发货费用明细（含订单号、下单汇率、合计CNY）。"""
+    content = outbound_svc.export_fee_detail_xlsx(batch_id)
+    filename = f"fee-detail-batch-{batch_id}.xlsx"
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get(
+    "/api/finance/summary",
+    response_model=FinanceSummaryOut,
+    tags=["财务"],
+    summary="财务月度汇总",
+)
+def finance_summary(
+    month: Optional[str] = Query(
+        default=None, description="YYYY-MM；默认本月（UTC）"
+    ),
+) -> dict:
+    """按下单月与出库月分别汇总金额。"""
+    return finance_svc.month_summary(month)
 
 
 @app.post(

@@ -204,6 +204,7 @@ def confirm_ordered(
                 shop=current.get("shop") or "",
                 order_qty=int(current.get("qty") or 1),
                 shipping_fee=payload.shipping_fee if payload.shipping_fee is not None else 0,
+                exchange_rate=payload.exchange_rate,
                 note=f"来自申请 {current.get('request_code')}"
                 + (f"；{payload.staff_note}" if payload.staff_note.strip() else ""),
                 lines=[

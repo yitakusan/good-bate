@@ -112,12 +112,36 @@ def _order_out(conn, order_id: int) -> dict[str, Any]:
             shipping = float(shipping)
         except (TypeError, ValueError):
             shipping = None
+    rate = result.get("exchange_rate")
+    if rate is not None:
+        try:
+            rate = float(rate)
+            if rate <= 0:
+                rate = None
+        except (TypeError, ValueError):
+            rate = None
     result["shipping_fee"] = shipping
+    result["exchange_rate"] = rate
     result["goods_total"] = goods_total
     if goods_total is not None or shipping is not None:
         result["order_total"] = round((goods_total or 0) + (shipping or 0), 2)
     else:
         result["order_total"] = None
+    if rate is not None:
+        result["goods_total_cny"] = (
+            round(goods_total * rate, 2) if goods_total is not None else None
+        )
+        result["shipping_fee_cny"] = (
+            round((shipping or 0) * rate, 2) if shipping is not None else None
+        )
+        if result["order_total"] is not None:
+            result["order_total_cny"] = round(result["order_total"] * rate, 2)
+        else:
+            result["order_total_cny"] = None
+    else:
+        result["goods_total_cny"] = None
+        result["shipping_fee_cny"] = None
+        result["order_total_cny"] = None
     return result
 
 
@@ -186,13 +210,19 @@ def create_order(payload: OrderCreate) -> dict[str, Any]:
     shipping_fee = 0.0 if payload.shipping_fee is None else float(payload.shipping_fee)
     if shipping_fee < 0:
         shipping_fee = 0.0
+    exchange_rate = None
+    if payload.exchange_rate is not None:
+        exchange_rate = float(payload.exchange_rate)
+        if exchange_rate <= 0:
+            raise HTTPException(status_code=400, detail="exchange_rate must be > 0")
     with get_conn() as conn:
         cur = conn.execute(
             """
             INSERT INTO orders (
                 order_ref, shop, status, ordered_at, order_qty, shipping_fee,
-                order_image_url, note, expected_ship_at, expected_ship_period
-            ) VALUES (?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?)
+                exchange_rate, order_image_url, note, expected_ship_at,
+                expected_ship_period
+            ) VALUES (?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.order_ref.strip(),
@@ -200,6 +230,7 @@ def create_order(payload: OrderCreate) -> dict[str, Any]:
                 _now(),
                 payload.order_qty,
                 shipping_fee,
+                exchange_rate,
                 (payload.order_image_url or "").strip(),
                 payload.note.strip(),
                 expected_ship_at,
@@ -310,6 +341,16 @@ def update_order(order_id: int, payload: OrderUpdate) -> dict[str, Any]:
     if "shipping_fee" in data:
         fee = data["shipping_fee"]
         data["shipping_fee"] = 0.0 if fee is None else max(0.0, float(fee))
+
+    if "exchange_rate" in data:
+        rate = data["exchange_rate"]
+        if rate is None:
+            data["exchange_rate"] = None
+        else:
+            rate = float(rate)
+            if rate <= 0:
+                raise HTTPException(status_code=400, detail="exchange_rate must be > 0")
+            data["exchange_rate"] = rate
 
     if "expected_ship_at" in data:
         data["expected_ship_at"] = _normalize_expected_ship(data["expected_ship_at"])

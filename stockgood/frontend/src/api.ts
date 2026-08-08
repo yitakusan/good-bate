@@ -55,6 +55,7 @@ export interface Order {
   ordered_at: string;
   order_qty: number | null;
   shipping_fee: number | null;
+  exchange_rate: number | null;
   order_image_url: string;
   note: string;
   expected_ship_at: string | null;
@@ -63,6 +64,9 @@ export interface Order {
   total_qty: number;
   goods_total: number | null;
   order_total: number | null;
+  goods_total_cny: number | null;
+  shipping_fee_cny: number | null;
+  order_total_cny: number | null;
   lines: Line[];
 }
 
@@ -113,6 +117,8 @@ export interface OutboundBox {
   order_groups: OrderGroupInBox[];
 }
 
+export type PaymentStatus = "unpaid" | "partial" | "paid";
+
 export interface OutboundBatch {
   id: number;
   note: string;
@@ -120,6 +126,78 @@ export interface OutboundBatch {
   boxes: OutboundBox[];
   box_count: number;
   item_count: number;
+  goods_jpy: number | null;
+  order_shipping_jpy: number | null;
+  goods_receivable_cny: number | null;
+  freight_exchange_rate: number | null;
+  freight_unit_price_jpy: number | null;
+  chargeable_weight: number | null;
+  freight_cny: number | null;
+  amount_receivable_cny: number | null;
+  amount_received_cny: number;
+  amount_unreceived_cny: number | null;
+  payment_status: PaymentStatus;
+  payment_note: string;
+}
+
+export interface FinanceMonthBucket {
+  goods_jpy: number;
+  shipping_jpy: number;
+  total_jpy: number;
+  goods_cny: number | null;
+  shipping_cny: number | null;
+  total_cny: number | null;
+  order_count: number;
+  missing_rate_count: number;
+}
+
+export interface FinanceOutboundBucket {
+  goods_jpy: number;
+  goods_receivable_cny: number | null;
+  freight_cny: number | null;
+  amount_receivable_cny: number | null;
+  amount_received_cny: number;
+  amount_unreceived_cny: number | null;
+  batch_count: number;
+}
+
+export interface FinanceSummary {
+  month: string;
+  ordered: FinanceMonthBucket;
+  outbound: FinanceOutboundBucket;
+}
+
+export interface StockBoxLine {
+  id: number;
+  order_id: number;
+  name: string;
+  shop: string;
+  order_ref: string;
+  qty: number;
+  status: ItemStatus;
+  image_url: string;
+  barcode: string;
+}
+
+export interface StockBoxOrder {
+  id: number;
+  order_ref: string;
+  shop: string;
+  status: OrderStatus;
+  line_count: number;
+  total_qty: number;
+  lines: StockBoxLine[];
+}
+
+export interface StockBox {
+  id: number;
+  box_no: number;
+  note: string;
+  created_at: string;
+  order_ids: number[];
+  order_count: number;
+  item_count: number;
+  orders: StockBoxOrder[];
 }
 
 export interface Stats {
@@ -155,6 +233,7 @@ export interface OrderCreate {
   shop?: string;
   order_qty?: number | null;
   shipping_fee?: number | null;
+  exchange_rate?: number | null;
   order_image_url?: string;
   note?: string;
   expected_ship_at?: string | null;
@@ -463,6 +542,7 @@ export function confirmOrderRequest(
     staff_note?: string;
     create_stock_order?: boolean;
     shipping_fee?: number | null;
+    exchange_rate?: number | null;
   },
 ) {
   return request<OrderRequest>(`/api/order-requests/${id}/confirm-ordered`, {
@@ -505,6 +585,54 @@ export function confirmShipment(id: number) {
   return request<Shipment>(`/api/shipments/${id}/confirm`, { method: "POST" });
 }
 
+export function fetchStockBoxes() {
+  return request<StockBox[]>("/api/stock-boxes");
+}
+
+export function createStockBox(payload: {
+  order_ids: number[];
+  note?: string;
+  box_no?: number;
+}) {
+  return request<StockBox>("/api/stock-boxes", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function combineStockBox(payload: {
+  order_ids: number[];
+  note?: string;
+}) {
+  return request<StockBox>("/api/stock-boxes/combine", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateStockBox(
+  boxId: number,
+  payload: { note?: string; box_no?: number },
+) {
+  return request<StockBox>(`/api/stock-boxes/${boxId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function removeStockBoxOrders(boxId: number, orderIds: number[]) {
+  return request<StockBox | null>(`/api/stock-boxes/${boxId}/remove-orders`, {
+    method: "POST",
+    body: JSON.stringify({ order_ids: orderIds }),
+  });
+}
+
+export function deleteStockBox(boxId: number) {
+  return request<{ ok: boolean }>(`/api/stock-boxes/${boxId}`, {
+    method: "DELETE",
+  });
+}
+
 export function fetchOutboundBatches(limit = 50) {
   return request<OutboundBatch[]>(`/api/outbound-batches?limit=${limit}`);
 }
@@ -517,6 +645,11 @@ export function createOutboundBatch(payload: {
     tracking_no: string;
     item_ids: number[];
   }[];
+  allow_missing_barcode?: boolean;
+  missing_barcode_note?: string;
+  freight_exchange_rate?: number | null;
+  freight_unit_price_jpy?: number | null;
+  chargeable_weight?: number | null;
 }) {
   return request<OutboundBatch>("/api/outbound-batches", {
     method: "POST",
@@ -528,6 +661,50 @@ export function confirmOutboundBatch(id: number) {
   return request<OutboundBatch>(`/api/outbound-batches/${id}/confirm`, {
     method: "POST",
   });
+}
+
+export function updateOutboundBatchFinance(
+  id: number,
+  payload: {
+    freight_exchange_rate?: number | null;
+    freight_unit_price_jpy?: number | null;
+    chargeable_weight?: number | null;
+    amount_received_cny?: number | null;
+    payment_note?: string;
+  },
+) {
+  return request<OutboundBatch>(`/api/outbound-batches/${id}/finance`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function downloadOutboundFeeDetail(id: number) {
+  const headers: Record<string, string> = {};
+  const adminToken = getAdminToken();
+  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  return fetch(`/api/outbound-batches/${id}/fee-detail.xlsx`, { headers }).then(
+    async (res) => {
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || res.statusText);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `fee-detail-batch-${id}.xlsx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    },
+  );
+}
+
+export function fetchFinanceSummary(month?: string) {
+  const q = month ? `?month=${encodeURIComponent(month)}` : "";
+  return request<FinanceSummary>(`/api/finance/summary${q}`);
 }
 
 export function fetchActionLogs(limit = 50) {

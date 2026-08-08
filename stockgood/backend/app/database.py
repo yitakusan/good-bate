@@ -190,6 +190,7 @@ def init_db() -> None:
                 ordered_at TEXT NOT NULL,
                 order_qty INTEGER,
                 shipping_fee REAL,
+                exchange_rate REAL,
                 order_image_url TEXT NOT NULL DEFAULT '',
                 note TEXT NOT NULL DEFAULT '',
                 expected_ship_at TEXT,
@@ -223,7 +224,33 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS outbound_batches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 note TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL,
+                goods_jpy REAL,
+                order_shipping_jpy REAL,
+                goods_receivable_cny REAL,
+                freight_exchange_rate REAL,
+                freight_unit_price_jpy REAL,
+                chargeable_weight REAL,
+                freight_cny REAL,
+                amount_receivable_cny REAL,
+                amount_received_cny REAL NOT NULL DEFAULT 0,
+                payment_status TEXT NOT NULL DEFAULT 'unpaid',
+                payment_note TEXT NOT NULL DEFAULT ''
+            );
+
+            CREATE TABLE IF NOT EXISTS stock_boxes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                box_no INTEGER NOT NULL UNIQUE,
+                note TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS stock_box_orders (
+                box_id INTEGER NOT NULL,
+                order_id INTEGER NOT NULL,
+                PRIMARY KEY (order_id),
+                FOREIGN KEY (box_id) REFERENCES stock_boxes(id) ON DELETE CASCADE,
+                FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS shipments (
@@ -292,6 +319,7 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_action_logs_created ON action_logs(id DESC);
             CREATE INDEX IF NOT EXISTS idx_order_requests_status ON order_requests(status);
             CREATE INDEX IF NOT EXISTS idx_order_requests_code ON order_requests(request_code);
+            CREATE INDEX IF NOT EXISTS idx_stock_box_orders_box ON stock_box_orders(box_id);
             """
         )
         _ensure_column(conn, "items", "source_url", "TEXT NOT NULL DEFAULT ''")
@@ -304,6 +332,18 @@ def init_db() -> None:
         _ensure_column(conn, "items", "order_image_url", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "items", "order_id", "INTEGER")
         _ensure_column(conn, "orders", "shipping_fee", "REAL")
+        _ensure_column(conn, "orders", "exchange_rate", "REAL")
+        _ensure_column(conn, "outbound_batches", "goods_jpy", "REAL")
+        _ensure_column(conn, "outbound_batches", "order_shipping_jpy", "REAL")
+        _ensure_column(conn, "outbound_batches", "goods_receivable_cny", "REAL")
+        _ensure_column(conn, "outbound_batches", "freight_exchange_rate", "REAL")
+        _ensure_column(conn, "outbound_batches", "freight_unit_price_jpy", "REAL")
+        _ensure_column(conn, "outbound_batches", "chargeable_weight", "REAL")
+        _ensure_column(conn, "outbound_batches", "freight_cny", "REAL")
+        _ensure_column(conn, "outbound_batches", "amount_receivable_cny", "REAL")
+        _ensure_column(conn, "outbound_batches", "amount_received_cny", "REAL NOT NULL DEFAULT 0")
+        _ensure_column(conn, "outbound_batches", "payment_status", "TEXT NOT NULL DEFAULT 'unpaid'")
+        _ensure_column(conn, "outbound_batches", "payment_note", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "shipments", "direction", "TEXT NOT NULL DEFAULT 'inbound'")
         _ensure_column(conn, "shipments", "carrier", "TEXT NOT NULL DEFAULT 'other'")
         _ensure_column(conn, "shipments", "order_id", "INTEGER")

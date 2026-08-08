@@ -5,6 +5,7 @@ import {
   AppMeta,
   Carrier,
   ExpectedShipPeriod,
+  FinanceSummary,
   ItemStatus,
   Line,
   Order,
@@ -14,14 +15,19 @@ import {
   ScrapeProduct,
   Shipment,
   Stats,
+  StockBox,
   TunnelStatus,
+  combineStockBox,
   confirmOrderRequest,
   confirmOutboundBatch,
   confirmShipment,
   createOrder,
   createOrderInbound,
   createOutboundBatch,
+  deleteStockBox,
+  downloadOutboundFeeDetail,
   fetchActionLogs,
+  fetchFinanceSummary,
   fetchItems,
   fetchLatestActionLog,
   fetchMeta,
@@ -31,31 +37,48 @@ import {
   fetchShipments,
   fetchShops,
   fetchStats,
+  fetchStockBoxes,
   fetchTunnelStatus,
   startTunnel,
   stopTunnel,
   getAdminToken,
   rejectOrderRequest,
+  removeStockBoxOrders,
   scrapeUrl,
   setAdminToken,
   undoActionLog,
   updateItem,
   updateOrder,
+  updateOutboundBatchFinance,
+  updateStockBox,
 } from "./api";
 import { batchScrapeDelayMs, waitForBatchScrape } from "./scrapeDelay";
 
-type Tab = "orders" | "requests" | "scrape" | "inbound" | "outbound" | "logs";
+type Tab =
+  | "orders"
+  | "finance"
+  | "requests"
+  | "scrape"
+  | "inbound"
+  | "inventory"
+  | "outbound"
+  | "logs";
 const REQUEST_STATUS_LABEL: Record<OrderRequestStatus, string> = {
   submitted: "已提交",
   ordered: "已下单",
   rejected: "已拒绝",
 };
 type DraftBox = {
+  uid: string;
   box_no: number;
   carrier: Carrier;
   tracking_no: string;
   item_ids: number[];
 };
+
+function newDraftBoxUid() {
+  return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 const STATUS_LABEL: Record<ItemStatus, string> = {
   ordered: "已下单",
   inbound_shipped: "已发往仓库",
@@ -97,12 +120,32 @@ const EMPTY_FORM = {
   shop: "",
   order_qty: "",
   shipping_fee: "0",
+  exchange_rate: "",
   order_image_url: "",
   note: "",
   expected_ship_at: "",
   expected_ship_period: "" as "" | ExpectedShipPeriod,
   lines: [EMPTY_LINE()] as DraftLine[],
 };
+
+const PAYMENT_LABEL: Record<string, string> = {
+  unpaid: "未收款",
+  partial: "部分收款",
+  paid: "已收款",
+};
+
+function parsePositiveRate(raw: string): number | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const n = Number(text);
+  if (Number.isNaN(n) || n <= 0) return null;
+  return n;
+}
+
+function moneyText(value: number | null | undefined, empty = "—") {
+  if (value == null || Number.isNaN(Number(value))) return empty;
+  return String(value);
+}
 
 function currentYearMonth() {
   const d = new Date();
@@ -170,7 +213,15 @@ export default function App() {
   const [orderRequests, setOrderRequests] = useState<OrderRequest[]>([]);
   const [requestStatusFilter, setRequestStatusFilter] = useState("");
   const [confirmDraft, setConfirmDraft] = useState<
-    Record<number, { shop_order_ref: string; staff_note: string; create_stock: boolean }>
+    Record<
+      number,
+      {
+        shop_order_ref: string;
+        staff_note: string;
+        create_stock: boolean;
+        exchange_rate: string;
+      }
+    >
   >({});
   const [rejectDraft, setRejectDraft] = useState<Record<number, string>>({});
   const [adminTokenInput, setAdminTokenInput] = useState(() => getAdminToken());
@@ -192,6 +243,11 @@ export default function App() {
   const [scrapeOrderRef, setScrapeOrderRef] = useState("");
   const [scrapeOrderQty, setScrapeOrderQty] = useState("");
   const [scrapeShippingFee, setScrapeShippingFee] = useState("0");
+  const [scrapeExchangeRate, setScrapeExchangeRate] = useState("");
+  const [financeMonth, setFinanceMonth] = useState(currentYearMonth);
+  const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(
+    null,
+  );
   const [scrapeBusy, setScrapeBusy] = useState(false);
   const [collection, setCollection] = useState<ScrapeProduct[]>([]);
   const [collectionPick, setCollectionPick] = useState<number[]>([]);
@@ -208,6 +264,9 @@ export default function App() {
   >("");
 
   const [selectedInboundIds, setSelectedInboundIds] = useState<number[]>([]);
+  const [expandedInboundOrderIds, setExpandedInboundOrderIds] = useState<
+    number[]
+  >([]);
   const [inboundCarrier, setInboundCarrier] = useState<Carrier>("other");
   const [inboundTrackingNo, setInboundTrackingNo] = useState("");
   const [preferredInboundOrderIds, setPreferredInboundOrderIds] = useState<
@@ -215,8 +274,36 @@ export default function App() {
   >([]);
 
   const [selectedStockIds, setSelectedStockIds] = useState<number[]>([]);
+  const [expandedOutboundOrderIds, setExpandedOutboundOrderIds] = useState<
+    number[]
+  >([]);
+  const [expandedDraftBoxUids, setExpandedDraftBoxUids] = useState<string[]>(
+    [],
+  );
+  const [expandedDraftOrderKeys, setExpandedDraftOrderKeys] = useState<
+    string[]
+  >([]);
+  const [stockBoxes, setStockBoxes] = useState<StockBox[]>([]);
+  const [inventoryBoxFilter, setInventoryBoxFilter] = useState<string>("all");
+  const [stockBoxNoteDraft, setStockBoxNoteDraft] = useState("");
+  const [selectedInventoryOrderIds, setSelectedInventoryOrderIds] = useState<
+    number[]
+  >([]);
+  const [expandedInventoryOrderIds, setExpandedInventoryOrderIds] = useState<
+    number[]
+  >([]);
   const [draftBoxes, setDraftBoxes] = useState<DraftBox[]>([]);
   const [batchNote, setBatchNote] = useState("");
+  const [freightExchangeRate, setFreightExchangeRate] = useState("");
+  const [freightUnitPrice, setFreightUnitPrice] = useState("");
+  const [chargeableWeight, setChargeableWeight] = useState("");
+  const [batchReceivedDraft, setBatchReceivedDraft] = useState<
+    Record<number, string>
+  >({});
+  const [outboundAllowMissingBarcode, setOutboundAllowMissingBarcode] =
+    useState(false);
+  const [outboundMissingBarcodeNote, setOutboundMissingBarcodeNote] =
+    useState("");
 
   const inboundLines = useMemo(
     () =>
@@ -229,6 +316,13 @@ export default function App() {
     () => new Set(draftBoxes.flatMap((box) => box.item_ids)),
     [draftBoxes],
   );
+  const stockBoxByOrderId = useMemo(() => {
+    const map = new Map<number, StockBox>();
+    for (const box of stockBoxes) {
+      for (const oid of box.order_ids) map.set(oid, box);
+    }
+    return map;
+  }, [stockBoxes]);
 
   async function loadChrome() {
     const [nextStats, nextMeta, nextLog] = await Promise.all([
@@ -267,18 +361,38 @@ export default function App() {
     setShipments(pending);
   }
 
+  async function loadInventory() {
+    const [lines, boxes] = await Promise.all([
+      fetchItems({ status: "in_stock" }),
+      fetchStockBoxes(),
+    ]);
+    setStockLines(lines);
+    setStockBoxes(boxes);
+  }
+
   async function loadOutbound() {
-    const [lines, existing] = await Promise.all([
+    const [lines, existing, boxes] = await Promise.all([
       fetchItems({ status: "in_stock" }),
       fetchOutboundBatches(),
+      fetchStockBoxes(),
     ]);
     setStockLines(lines);
     setBatches(existing);
+    setStockBoxes(boxes);
+    const drafts: Record<number, string> = {};
+    for (const batch of existing) {
+      drafts[batch.id] = String(batch.amount_received_cny ?? 0);
+    }
+    setBatchReceivedDraft(drafts);
   }
 
   async function loadOrderRequests() {
     const list = await fetchOrderRequests(requestStatusFilter || undefined);
     setOrderRequests(list);
+  }
+
+  async function loadFinance() {
+    setFinanceSummary(await fetchFinanceSummary(financeMonth));
   }
 
   async function refresh() {
@@ -287,8 +401,10 @@ export default function App() {
     try {
       await loadChrome();
       if (tab === "orders") await loadOrders();
+      if (tab === "finance") await loadFinance();
       if (tab === "requests") await loadOrderRequests();
       if (tab === "inbound") await loadInbound();
+      if (tab === "inventory") await loadInventory();
       if (tab === "outbound") await loadOutbound();
       if (tab === "logs") setLogs(await fetchActionLogs(80));
     } catch (err) {
@@ -301,7 +417,14 @@ export default function App() {
   useEffect(() => {
     void refresh();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, statusFilter, shopFilter, shipMonthFilter, requestStatusFilter]);
+  }, [
+    tab,
+    statusFilter,
+    shopFilter,
+    shipMonthFilter,
+    requestStatusFilter,
+    financeMonth,
+  ]);
 
   useEffect(() => {
     let cancelled = false;
@@ -378,6 +501,11 @@ export default function App() {
     try {
       const shippingRaw = form.shipping_fee.trim();
       const shippingFee = shippingRaw === "" ? 0 : Number(shippingRaw);
+      const rate = parsePositiveRate(form.exchange_rate);
+      if (form.exchange_rate.trim() && rate == null) {
+        setError("下单汇率须为大于 0 的数字");
+        return;
+      }
       await createOrder({
         order_ref: form.order_ref.trim(),
         shop: form.shop.trim(),
@@ -385,6 +513,7 @@ export default function App() {
           ? Math.max(1, Number(form.order_qty) || 1)
           : lineQtySum,
         shipping_fee: Number.isNaN(shippingFee) ? 0 : Math.max(0, shippingFee),
+        exchange_rate: rate,
         order_image_url: form.order_image_url.trim(),
         note: form.note.trim(),
         expected_ship_at: form.expected_ship_at || null,
@@ -707,6 +836,11 @@ export default function App() {
       const lineQtySum = picked.reduce((sum, line) => sum + line.qty, 0);
       const shippingRaw = scrapeShippingFee.trim();
       const shippingFee = shippingRaw === "" ? 0 : Number(shippingRaw);
+      const rate = parsePositiveRate(scrapeExchangeRate);
+      if (scrapeExchangeRate.trim() && rate == null) {
+        setError("下单汇率须为大于 0 的数字");
+        return;
+      }
       await createOrder({
         order_ref: sharedRef,
         shop,
@@ -714,6 +848,7 @@ export default function App() {
           ? Math.max(1, Number(scrapeOrderQty) || 1)
           : lineQtySum,
         shipping_fee: Number.isNaN(shippingFee) ? 0 : Math.max(0, shippingFee),
+        exchange_rate: rate,
         expected_ship_at: batchExpectedShip.trim() || null,
         expected_ship_period: batchExpectedShip.trim()
           ? batchExpectedPeriod || null
@@ -729,6 +864,7 @@ export default function App() {
       setScrapeOrderRef("");
       setScrapeOrderQty("");
       setScrapeShippingFee("0");
+      setScrapeExchangeRate("");
       setBatchExpectedShip("");
       setBatchExpectedPeriod("");
       setMessage(`已导入 1 笔订单「${sharedRef}」，含 ${picked.length} 行明细`);
@@ -757,6 +893,12 @@ export default function App() {
         ? current.filter((id) => !ids.includes(id))
         : [...new Set([...current, ...ids])];
     });
+  }
+
+  function toggleInboundOrderExpanded(orderId: number) {
+    setExpandedInboundOrderIds((ids) =>
+      ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
   }
 
   async function onConfirmInboundToStock() {
@@ -818,14 +960,155 @@ export default function App() {
     });
   }
 
+  function toggleOutboundOrderExpanded(orderId: number) {
+    setExpandedOutboundOrderIds((ids) =>
+      ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
+  }
+
+  function toggleDraftBoxExpanded(uid: string) {
+    setExpandedDraftBoxUids((uids) =>
+      uids.includes(uid) ? uids.filter((id) => id !== uid) : [...uids, uid],
+    );
+  }
+
+  function toggleDraftOrderExpanded(boxUid: string, orderId: number) {
+    const key = `${boxUid}:${orderId}`;
+    setExpandedDraftOrderKeys((keys) =>
+      keys.includes(key) ? keys.filter((k) => k !== key) : [...keys, key],
+    );
+  }
+
+  function toggleInventoryOrderExpanded(orderId: number) {
+    setExpandedInventoryOrderIds((ids) =>
+      ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
+  }
+
+  function toggleInventoryOrderSelected(orderId: number) {
+    setSelectedInventoryOrderIds((ids) =>
+      ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
+  }
+
+  async function onCombineInventoryOrders() {
+    if (selectedInventoryOrderIds.length < 1) {
+      setError("请先勾选要合箱的在库订单");
+      return;
+    }
+    try {
+      const box = await combineStockBox({ order_ids: selectedInventoryOrderIds });
+      setSelectedInventoryOrderIds([]);
+      setMessage(
+        `已合箱：库存箱 #${box.box_no}（${box.order_count} 单 / ${box.item_count} 行）`,
+      );
+      setStockBoxes(await fetchStockBoxes());
+      setInventoryBoxFilter(String(box.id));
+      setStockBoxNoteDraft(box.note || "");
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onRemoveInventoryOrder(boxId: number, orderId: number) {
+    try {
+      await removeStockBoxOrders(boxId, [orderId]);
+      setMessage("已从库存箱移出订单");
+      setStockBoxes(await fetchStockBoxes());
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onDissolveStockBox(boxId: number) {
+    if (!confirm("解散该库存合箱？订单仍保持在库，仅取消合箱关系。")) return;
+    try {
+      await deleteStockBox(boxId);
+      setMessage("已解散库存合箱");
+      setStockBoxes(await fetchStockBoxes());
+      if (inventoryBoxFilter === String(boxId)) {
+        setInventoryBoxFilter("all");
+        setStockBoxNoteDraft("");
+      }
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onSaveStockBoxNote() {
+    const boxId = Number(inventoryBoxFilter);
+    if (!Number.isFinite(boxId) || boxId < 1) {
+      setError("请先在下拉列表选择库存箱");
+      return;
+    }
+    try {
+      const box = await updateStockBox(boxId, { note: stockBoxNoteDraft });
+      setMessage(`已更新库存箱 #${box.box_no} 备注`);
+      setStockBoxes(await fetchStockBoxes());
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  function onInventoryBoxFilterChange(value: string) {
+    setInventoryBoxFilter(value);
+    if (value === "all" || value === "unboxed") {
+      setStockBoxNoteDraft("");
+      return;
+    }
+    const box = stockBoxes.find((b) => String(b.id) === value);
+    setStockBoxNoteDraft(box?.note || "");
+  }
+
+  function applyStockBoxSuggestions() {
+    const unassigned = stockLines.filter((line) => !assignedIds.has(line.id));
+    if (!unassigned.length) {
+      setError("没有可分配的在库行");
+      return;
+    }
+    const groups = new Map<string, number[]>();
+    const orderKeys: string[] = [];
+    for (const line of unassigned) {
+      const box = stockBoxByOrderId.get(line.order_id);
+      const key = box ? `box:${box.id}` : `order:${line.order_id}`;
+      if (!groups.has(key)) {
+        groups.set(key, []);
+        orderKeys.push(key);
+      }
+      groups.get(key)!.push(line.id);
+    }
+    const startNo = draftBoxes.length
+      ? Math.max(...draftBoxes.map((box) => box.box_no)) + 1
+      : 1;
+    const suggested: DraftBox[] = orderKeys.map((key, index) => ({
+      uid: newDraftBoxUid(),
+      box_no: startNo + index,
+      carrier: "other" as Carrier,
+      tracking_no: "",
+      item_ids: groups.get(key) || [],
+    }));
+    setDraftBoxes((current) => [...current, ...suggested]);
+    setExpandedDraftBoxUids((uids) => [
+      ...uids,
+      ...suggested.map((box) => box.uid),
+    ]);
+    setSelectedStockIds([]);
+    setMessage(
+      `已按库存合箱建议生成 ${suggested.length} 箱（可再改分箱/运单号）`,
+    );
+    setError("");
+  }
+
   function addDraftBox() {
     if (!selectedStockIds.length) {
       setError("请先选择至少一个完整订单的在库行");
       return;
     }
+    const uid = newDraftBoxUid();
     setDraftBoxes((current) => [
       ...current,
       {
+        uid,
         box_no: current.length
           ? Math.max(...current.map((box) => box.box_no)) + 1
           : 1,
@@ -834,6 +1117,9 @@ export default function App() {
         item_ids: selectedStockIds,
       },
     ]);
+    setExpandedDraftBoxUids((uids) =>
+      uids.includes(uid) ? uids : [...uids, uid],
+    );
     setSelectedStockIds([]);
     setError("");
   }
@@ -847,14 +1133,18 @@ export default function App() {
   }
 
   function removeDraftLine(boxIndex: number, id: number) {
-    setDraftBoxes((current) =>
-      current
-        .map((box, index) =>
-          index === boxIndex
-            ? { ...box, item_ids: box.item_ids.filter((itemId) => itemId !== id) }
-            : box,
-        )
-        .filter((box) => box.item_ids.length),
+    const next = draftBoxes
+      .map((box, index) =>
+        index === boxIndex
+          ? { ...box, item_ids: box.item_ids.filter((itemId) => itemId !== id) }
+          : box,
+      )
+      .filter((box) => box.item_ids.length);
+    const keep = new Set(next.map((box) => box.uid));
+    setDraftBoxes(next);
+    setExpandedDraftBoxUids((uids) => uids.filter((uid) => keep.has(uid)));
+    setExpandedDraftOrderKeys((keys) =>
+      keys.filter((key) => keep.has(key.split(":")[0] || "")),
     );
     setSelectedStockIds((current) => [...new Set([...current, id])]);
   }
@@ -881,6 +1171,40 @@ export default function App() {
       setError("请填写每个箱子的快递单号");
       return;
     }
+    const noBarcode = stockLines.filter(
+      (line) => included.has(line.id) && !(line.barcode || "").trim(),
+    );
+    if (noBarcode.length && !outboundAllowMissingBarcode) {
+      setError(
+        `出库必须登记条形码：还有 ${noBarcode.length} 行未填写。请补条码，或勾选特殊情况并备注。`,
+      );
+      return;
+    }
+    if (
+      noBarcode.length &&
+      outboundAllowMissingBarcode &&
+      !outboundMissingBarcodeNote.trim()
+    ) {
+      setError("勾选特殊情况时必须填写无条形码备注");
+      return;
+    }
+    const freightRate = parsePositiveRate(freightExchangeRate);
+    if (freightExchangeRate.trim() && freightRate == null) {
+      setError("运费汇率须为大于 0 的数字");
+      return;
+    }
+    const unitRaw = freightUnitPrice.trim();
+    const weightRaw = chargeableWeight.trim();
+    const unitPrice = unitRaw === "" ? null : Number(unitRaw);
+    const weight = weightRaw === "" ? null : Number(weightRaw);
+    if (unitRaw && (unitPrice == null || Number.isNaN(unitPrice) || unitPrice < 0)) {
+      setError("运费单价无效");
+      return;
+    }
+    if (weightRaw && (weight == null || Number.isNaN(weight) || weight < 0)) {
+      setError("计费重量无效");
+      return;
+    }
     try {
       await createOutboundBatch({
         note: batchNote.trim(),
@@ -890,12 +1214,78 @@ export default function App() {
           tracking_no: box.tracking_no.trim(),
           item_ids: box.item_ids,
         })),
+        allow_missing_barcode: outboundAllowMissingBarcode && noBarcode.length > 0,
+        missing_barcode_note:
+          outboundAllowMissingBarcode && noBarcode.length > 0
+            ? outboundMissingBarcodeNote.trim()
+            : "",
+        freight_exchange_rate: freightRate,
+        freight_unit_price_jpy: unitPrice,
+        chargeable_weight: weight,
       });
       setDraftBoxes([]);
+      setExpandedDraftBoxUids([]);
+      setExpandedDraftOrderKeys([]);
       setSelectedStockIds([]);
       setBatchNote("");
-      setMessage("出库批次已创建");
+      setFreightExchangeRate("");
+      setFreightUnitPrice("");
+      setChargeableWeight("");
+      setOutboundAllowMissingBarcode(false);
+      setOutboundMissingBarcodeNote("");
+      setMessage("出库批次已创建（货款应收已锁定）");
       await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onSaveBatchReceived(batch: OutboundBatch) {
+    const raw = (batchReceivedDraft[batch.id] ?? "").trim();
+    const amount = raw === "" ? 0 : Number(raw);
+    if (Number.isNaN(amount) || amount < 0) {
+      setError("已收款金额无效");
+      return;
+    }
+    try {
+      await updateOutboundBatchFinance(batch.id, {
+        amount_received_cny: amount,
+      });
+      setMessage(`批次 #${batch.id} 已更新收款`);
+      await loadOutbound();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onSaveBatchFreight(batch: OutboundBatch, formEl: HTMLFormElement) {
+    const fd = new FormData(formEl);
+    const rateRaw = String(fd.get("freight_rate") || "").trim();
+    const unitRaw = String(fd.get("freight_unit") || "").trim();
+    const weightRaw = String(fd.get("freight_weight") || "").trim();
+    const rate = parsePositiveRate(rateRaw);
+    if (rateRaw && rate == null) {
+      setError("运费汇率须为大于 0 的数字");
+      return;
+    }
+    const unit = unitRaw === "" ? null : Number(unitRaw);
+    const weight = weightRaw === "" ? null : Number(weightRaw);
+    if (unitRaw && (unit == null || Number.isNaN(unit) || unit < 0)) {
+      setError("运费单价无效");
+      return;
+    }
+    if (weightRaw && (weight == null || Number.isNaN(weight) || weight < 0)) {
+      setError("计费重量无效");
+      return;
+    }
+    try {
+      await updateOutboundBatchFinance(batch.id, {
+        freight_exchange_rate: rate,
+        freight_unit_price_jpy: unit,
+        chargeable_weight: weight,
+      });
+      setMessage(`批次 #${batch.id} 国际运费已更新`);
+      await loadOutbound();
     } catch (err) {
       setError(errorText(err));
     }
@@ -1008,9 +1398,15 @@ export default function App() {
       shop_order_ref: "",
       staff_note: "",
       create_stock: true,
+      exchange_rate: "",
     };
     if (!draft.shop_order_ref.trim()) {
       setError("请填写店铺注文番号");
+      return;
+    }
+    const rate = parsePositiveRate(draft.exchange_rate || "");
+    if ((draft.exchange_rate || "").trim() && rate == null) {
+      setError("下单汇率须为大于 0 的数字");
       return;
     }
     setLoading(true);
@@ -1021,6 +1417,7 @@ export default function App() {
         staff_note: draft.staff_note.trim(),
         create_stock_order: draft.create_stock,
         shipping_fee: 0,
+        exchange_rate: rate,
       });
       setMessage(
         draft.create_stock
@@ -1056,6 +1453,37 @@ export default function App() {
     }
   }
 
+  const filteredInventoryGroups = useMemo(() => {
+    const groups = groupLines(stockLines);
+    if (inventoryBoxFilter === "all") return groups;
+    if (inventoryBoxFilter === "unboxed") {
+      return groups.filter(([orderId]) => !stockBoxByOrderId.has(orderId));
+    }
+    const boxId = Number(inventoryBoxFilter);
+    return groups.filter(
+      ([orderId]) => stockBoxByOrderId.get(orderId)?.id === boxId,
+    );
+  }, [stockLines, inventoryBoxFilter, stockBoxByOrderId]);
+
+  const selectedInventoryBox = useMemo(() => {
+    if (inventoryBoxFilter === "all" || inventoryBoxFilter === "unboxed") {
+      return null;
+    }
+    return stockBoxes.find((b) => String(b.id) === inventoryBoxFilter) || null;
+  }, [inventoryBoxFilter, stockBoxes]);
+
+  const missingBarcodeLines = useMemo(
+    () => stockLines.filter((line) => !(line.barcode || "").trim()),
+    [stockLines],
+  );
+
+  const draftMissingBarcodeLines = useMemo(() => {
+    const included = new Set(draftBoxes.flatMap((box) => box.item_ids));
+    return stockLines.filter(
+      (line) => included.has(line.id) && !(line.barcode || "").trim(),
+    );
+  }, [draftBoxes, stockLines]);
+
   return (
     <div className="app">
       {meta?.is_shadow && (
@@ -1067,7 +1495,7 @@ export default function App() {
       <header className="top">
         <div className="brand">
           <h1>Stockgood{meta?.is_shadow ? " · 测试" : ""}</h1>
-          <p className="brand-flow">订单 → 进库 → 出库 → 签收</p>
+          <p className="brand-flow">订单 → 进库 → 库存 → 出库 → 签收</p>
           <div className="tunnel-panel">
             <div className="tunnel-controls" aria-label="隧道开关">
               <button
@@ -1159,7 +1587,15 @@ export default function App() {
         </div>
         {stats && (
           <div className="stats">
-            {(["ordered", "inbound_shipped", "in_stock", "outbound_shipped", "delivered"] as ItemStatus[]).map(
+            {(
+              [
+                "ordered",
+                "inbound_shipped",
+                "in_stock",
+                "outbound_shipped",
+                "delivered",
+              ] as ItemStatus[]
+            ).map(
               (status) => (
                 <div className="stat" key={status}>
                   <b>{stats[status]}</b>
@@ -1201,9 +1637,11 @@ export default function App() {
         {(
           [
             ["orders", "订单"],
+            ["finance", "财务"],
             ["requests", "申请单"],
             ["scrape", "抓取导入"],
             ["inbound", "进库"],
+            ["inventory", "库存"],
             ["outbound", "出库"],
             ["logs", "操作日志"],
           ] as [Tab, string][]
@@ -1322,6 +1760,19 @@ export default function App() {
                     value={form.shipping_fee}
                     placeholder="整单运费"
                     onChange={(e) => setForm({ ...form, shipping_fee: e.target.value })}
+                  />
+                </label>
+                <label>
+                  下单汇率
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    value={form.exchange_rate}
+                    placeholder="如 0.048"
+                    onChange={(e) =>
+                      setForm({ ...form, exchange_rate: e.target.value })
+                    }
                   />
                 </label>
                 <label>订单截图 URL<input value={form.order_image_url} onChange={(e) => setForm({ ...form, order_image_url: e.target.value })} /></label>
@@ -1455,9 +1906,10 @@ export default function App() {
               <span>状态</span>
               <span>店铺</span>
               <span>IP</span>
+              <span>汇率</span>
               <span>商品¥</span>
               <span>运费¥</span>
-              <span>合计¥</span>
+              <span>合计¥/CNY</span>
               <span>预计发货</span>
               <span />
             </div>
@@ -1485,6 +1937,11 @@ export default function App() {
                       .then(() => refresh())
                       .catch((err) => setError(errorText(err)))
                   }
+                  onExchangeRate={(rate) =>
+                    void updateOrder(order.id, { exchange_rate: rate })
+                      .then(() => refresh())
+                      .catch((err) => setError(errorText(err)))
+                  }
                   onOrderRef={(orderRef) =>
                     void updateOrder(order.id, { order_ref: orderRef })
                       .then(() => refresh())
@@ -1494,6 +1951,89 @@ export default function App() {
               ))
             )}
           </div>
+        </section>
+      )}
+
+      {tab === "finance" && (
+        <section className="panel">
+          <p className="muted">
+            本月下单按 ordered_at；本月出库按出库批次创建时间。货款 CNY =
+            日元 × 下单汇率；国际运费单独汇率。
+          </p>
+          <div className="toolbar">
+            <label>
+              月份
+              <input
+                type="month"
+                value={financeMonth}
+                onChange={(e) => setFinanceMonth(e.target.value)}
+              />
+            </label>
+            <button type="button" className="btn" onClick={() => void loadFinance()}>
+              刷新
+            </button>
+          </div>
+          {!financeSummary ? (
+            <div className="empty">暂无财务数据</div>
+          ) : (
+            <div className="finance-grid">
+              <article className="finance-card">
+                <h3>本月下单（{financeSummary.month}）</h3>
+                <p>
+                  订单数 <strong>{financeSummary.ordered.order_count}</strong>
+                  {financeSummary.ordered.missing_rate_count > 0 && (
+                    <span className="muted">
+                      {" "}
+                      · {financeSummary.ordered.missing_rate_count} 单无汇率
+                    </span>
+                  )}
+                </p>
+                <ul>
+                  <li>商品 JPY：{moneyText(financeSummary.ordered.goods_jpy, "0")}</li>
+                  <li>运费 JPY：{moneyText(financeSummary.ordered.shipping_jpy, "0")}</li>
+                  <li>合计 JPY：{moneyText(financeSummary.ordered.total_jpy, "0")}</li>
+                  <li>商品 CNY：{moneyText(financeSummary.ordered.goods_cny)}</li>
+                  <li>运费 CNY：{moneyText(financeSummary.ordered.shipping_cny)}</li>
+                  <li>
+                    合计 CNY：
+                    <strong>{moneyText(financeSummary.ordered.total_cny)}</strong>
+                  </li>
+                </ul>
+              </article>
+              <article className="finance-card">
+                <h3>本月出库（{financeSummary.month}）</h3>
+                <p>
+                  批次数 <strong>{financeSummary.outbound.batch_count}</strong>
+                </p>
+                <ul>
+                  <li>货款 JPY：{moneyText(financeSummary.outbound.goods_jpy, "0")}</li>
+                  <li>
+                    货款应收 CNY：
+                    {moneyText(financeSummary.outbound.goods_receivable_cny)}
+                  </li>
+                  <li>
+                    国际运费 CNY：{moneyText(financeSummary.outbound.freight_cny)}
+                  </li>
+                  <li>
+                    应收合计 CNY：
+                    <strong>
+                      {moneyText(financeSummary.outbound.amount_receivable_cny)}
+                    </strong>
+                  </li>
+                  <li>
+                    已收 CNY：
+                    {moneyText(financeSummary.outbound.amount_received_cny, "0")}
+                  </li>
+                  <li>
+                    未收 CNY：
+                    <strong>
+                      {moneyText(financeSummary.outbound.amount_unreceived_cny)}
+                    </strong>
+                  </li>
+                </ul>
+              </article>
+            </div>
+          )}
         </section>
       )}
 
@@ -1528,6 +2068,7 @@ export default function App() {
                   shop_order_ref: req.shop_order_ref || "",
                   staff_note: req.staff_note || "",
                   create_stock: true,
+                  exchange_rate: "",
                 };
                 return (
                   <article className="request-card" key={req.id}>
@@ -1598,6 +2139,25 @@ export default function App() {
                               setConfirmDraft((cur) => ({
                                 ...cur,
                                 [req.id]: { ...draft, staff_note: e.target.value },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label>
+                          下单汇率
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.0001"
+                            value={draft.exchange_rate}
+                            placeholder="生成库存订单时写入"
+                            onChange={(e) =>
+                              setConfirmDraft((cur) => ({
+                                ...cur,
+                                [req.id]: {
+                                  ...draft,
+                                  exchange_rate: e.target.value,
+                                },
                               }))
                             }
                           />
@@ -1703,6 +2263,7 @@ export default function App() {
                 <label>订单号（共用）<input value={scrapeOrderRef} onChange={(e) => setScrapeOrderRef(e.target.value)} placeholder="留空则自动生成" /></label>
                 <label>下单数量（整单）<input type="number" min={1} value={scrapeOrderQty} onChange={(e) => setScrapeOrderQty(e.target.value)} placeholder="可留空=数量合计" /></label>
                 <label>运费（JPY）<input type="number" min={0} step="1" value={scrapeShippingFee} onChange={(e) => setScrapeShippingFee(e.target.value)} placeholder="整单运费" /></label>
+                <label>下单汇率<input type="number" min={0} step="0.0001" value={scrapeExchangeRate} onChange={(e) => setScrapeExchangeRate(e.target.value)} placeholder="如 0.048" /></label>
                 <label>共用预计发货月<input type="month" value={batchExpectedShip} onChange={(e) => setBatchExpectedShip(e.target.value)} /></label>
                 <label>共用上中下旬<select value={batchExpectedPeriod} disabled={!batchExpectedShip} onChange={(e) => setBatchExpectedPeriod(e.target.value as "" | ExpectedShipPeriod)}><option value="">整月</option><option value="early">上旬</option><option value="mid">中旬</option><option value="late">下旬</option></select></label>
               </div>
@@ -1793,39 +2354,59 @@ export default function App() {
                 const orderChecked =
                   ids.length > 0 &&
                   ids.every((id) => selectedInboundIds.includes(id));
+                const expanded = expandedInboundOrderIds.includes(orderId);
                 return (
                   <div className="order-sub" key={orderId}>
-                    <label className="order-sub-check">
-                      <input
-                        type="checkbox"
-                        checked={orderChecked}
-                        onChange={() => toggleInboundOrderAll(orderId)}
-                      />
-                      <strong>{group.orderRef}</strong>
-                    </label>
-                    {group.lines.map((line) => (
-                      <label key={line.id}>
-                        <input
-                          type="checkbox"
-                          checked={selectedInboundIds.includes(line.id)}
-                          onChange={() => toggleInboundLine(line.id)}
-                        />
-                        {line.image_url ? (
-                          <img
-                            className="thumb"
-                            src={line.image_url}
-                            alt=""
-                            referrerPolicy="no-referrer"
+                    <div className="order-sub-head">
+                      <div className="order-sub-check">
+                        <label className="order-check">
+                          <input
+                            type="checkbox"
+                            checked={orderChecked}
+                            onChange={() => toggleInboundOrderAll(orderId)}
                           />
-                        ) : (
-                          <span className="thumb placeholder" />
-                        )}
-                        <span>
-                          {line.name}
-                          <span className="muted"> · x{line.qty}</span>
-                        </span>
-                      </label>
-                    ))}
+                        </label>
+                        <button
+                          type="button"
+                          className="order-ref-btn mono"
+                          onClick={() => toggleInboundOrderExpanded(orderId)}
+                        >
+                          {group.orderRef}
+                        </button>
+                        <span className="muted"> · {group.lines.length} 行</span>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => toggleInboundOrderExpanded(orderId)}
+                      >
+                        {expanded ? "收起" : "明细"}
+                      </button>
+                    </div>
+                    {expanded &&
+                      group.lines.map((line) => (
+                        <label key={line.id}>
+                          <input
+                            type="checkbox"
+                            checked={selectedInboundIds.includes(line.id)}
+                            onChange={() => toggleInboundLine(line.id)}
+                          />
+                          {line.image_url ? (
+                            <img
+                              className="thumb"
+                              src={line.image_url}
+                              alt=""
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <span className="thumb placeholder" />
+                          )}
+                          <span>
+                            {line.name}
+                            <span className="muted"> · x{line.qty}</span>
+                          </span>
+                        </label>
+                      ))}
                   </div>
                 );
               })
@@ -1898,55 +2479,642 @@ export default function App() {
         </section>
       )}
 
+      {tab === "inventory" && (
+        <section className="panel">
+          <p className="muted">
+            仅显示当前在库订单。合箱只做仓库编组，不改变货品状态，也不等于出库装箱。出库前请补齐条形码。
+          </p>
+          {missingBarcodeLines.length > 0 && (
+            <div className="warn-banner">
+              有 {missingBarcodeLines.length} 件在库商品尚未添加条形码
+              （涉及{" "}
+              {
+                new Set(missingBarcodeLines.map((line) => line.order_id)).size
+              }{" "}
+              笔订单）。展开明细可补录；出库时必须登记条码。
+            </div>
+          )}
+          <div className="form-grid inventory-filter-row">
+            <label>
+              箱号筛选
+              <select
+                value={inventoryBoxFilter}
+                onChange={(e) => onInventoryBoxFilterChange(e.target.value)}
+              >
+                <option value="all">全部在库</option>
+                <option value="unboxed">未合箱</option>
+                {stockBoxes.map((box) => (
+                  <option key={box.id} value={String(box.id)}>
+                    #{box.box_no}
+                    {box.note ? ` · ${box.note}` : " · 无备注"}
+                    {`（${box.order_count} 单）`}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {selectedInventoryBox && (
+              <label className="inventory-note-field">
+                箱子备注（箱 #{selectedInventoryBox.box_no} / ID {selectedInventoryBox.id}）
+                <span className="inventory-note-edit">
+                  <input
+                    value={stockBoxNoteDraft}
+                    placeholder="自定义备注，便于识别箱子"
+                    onChange={(e) => setStockBoxNoteDraft(e.target.value)}
+                  />
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => void onSaveStockBoxNote()}
+                  >
+                    保存备注
+                  </button>
+                </span>
+              </label>
+            )}
+          </div>
+          <div className="toolbar">
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void onCombineInventoryOrders()}
+            >
+              合箱（已选 {selectedInventoryOrderIds.length} 单）
+            </button>
+            {selectedInventoryBox && (
+              <button
+                type="button"
+                className="btn btn-danger"
+                onClick={() => void onDissolveStockBox(selectedInventoryBox.id)}
+              >
+                解散当前箱
+              </button>
+            )}
+          </div>
+          <div className="item-pick">
+            {filteredInventoryGroups.length === 0 ? (
+              <div className="empty">
+                {stockLines.length === 0
+                  ? "暂无在库货品"
+                  : "当前筛选下没有订单"}
+              </div>
+            ) : (
+              filteredInventoryGroups.map(([orderId, group]) => {
+                const box = stockBoxByOrderId.get(orderId);
+                const expanded = expandedInventoryOrderIds.includes(orderId);
+                const selected = selectedInventoryOrderIds.includes(orderId);
+                const missingCount = group.lines.filter(
+                  (line) => !(line.barcode || "").trim(),
+                ).length;
+                return (
+                  <div className="order-sub" key={orderId}>
+                    <div className="order-sub-head">
+                      <div className="order-sub-check">
+                        <label className="order-check">
+                          <input
+                            type="checkbox"
+                            checked={selected}
+                            onChange={() => toggleInventoryOrderSelected(orderId)}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="order-ref-btn mono"
+                          onClick={() => toggleInventoryOrderExpanded(orderId)}
+                        >
+                          {group.orderRef}
+                        </button>
+                        <span className="muted"> · {group.lines.length} 行</span>
+                        {missingCount > 0 && (
+                          <span className="badge warn-badge">
+                            {missingCount} 件无条码
+                          </span>
+                        )}
+                        {box ? (
+                          <span className="badge in_stock">
+                            库存箱 #{box.box_no}
+                            {box.note ? ` · ${box.note}` : ""}
+                          </span>
+                        ) : (
+                          <span className="muted"> · 未合箱</span>
+                        )}
+                      </div>
+                      <span className="order-row-actions">
+                        {box && (
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() =>
+                              void onRemoveInventoryOrder(box.id, orderId)
+                            }
+                          >
+                            移出合箱
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => toggleInventoryOrderExpanded(orderId)}
+                        >
+                          {expanded ? "收起" : "明细"}
+                        </button>
+                      </span>
+                    </div>
+                    {expanded &&
+                      group.lines.map((line) => (
+                        <div
+                          className={`order-line-compact${!(line.barcode || "").trim() ? " missing-barcode" : ""}`}
+                          key={line.id}
+                        >
+                          {line.image_url ? (
+                            <img
+                              src={line.image_url}
+                              className="thumb-sm"
+                              alt=""
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <span className="thumb-sm placeholder" />
+                          )}
+                          <span className="ellipsis" title={line.name}>
+                            {line.name}
+                          </span>
+                          <span className="muted">x{line.qty}</span>
+                          <BarcodeInput
+                            value={line.barcode || ""}
+                            onSave={(barcode) =>
+                              void onUpdateLine(line.id, { barcode })
+                            }
+                          />
+                        </div>
+                      ))}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        </section>
+      )}
+
       {tab === "outbound" && (
         <section className="panel">
-          <p className="muted">勾选任一行会自动选择该订单全部在库行。一个批次可有多个箱子，每箱可混装多个订单。</p>
+          <p className="muted">勾选任一行会自动选择该订单全部在库行。一个批次可有多个箱子，每箱可混装多个订单。出库必须登记条形码；特殊情况可勾选并备注。</p>
+          {missingBarcodeLines.length > 0 && (
+            <div className="warn-banner">
+              在库中有 {missingBarcodeLines.length} 件未登记条形码；装箱出库前请补齐，或使用下方特殊情况放行。
+            </div>
+          )}
           <h2>1. 选择完整订单</h2>
           <div className="item-pick">
-            {stockLines.length === 0 ? <div className="empty">没有可出库的在库货品</div> : groupLines(stockLines).map(([orderId, group]) => (
-              <div className="order-sub" key={orderId}>
-                <strong>{group.orderRef}</strong>
-                {group.lines.map((line) => (
-                  <label key={line.id} className={assignedIds.has(line.id) ? "source-disabled" : ""}>
-                    <input type="checkbox" disabled={assignedIds.has(line.id)} checked={selectedStockIds.includes(line.id) || assignedIds.has(line.id)} onChange={() => toggleStockOrder(line)} />
-                    {line.image_url ? <img className="thumb" src={line.image_url} alt="" referrerPolicy="no-referrer" /> : <span className="thumb placeholder" />}
-                    <span>{line.name}<span className="muted"> · x{line.qty}{assignedIds.has(line.id) ? " · 已分箱" : ""}</span></span>
-                  </label>
-                ))}
-              </div>
-            ))}
+            {stockLines.length === 0 ? (
+              <div className="empty">没有可出库的在库货品</div>
+            ) : (
+              groupLines(stockLines).map(([orderId, group]) => {
+                const selectableIds = group.lines
+                  .map((line) => line.id)
+                  .filter((id) => !assignedIds.has(id));
+                const orderChecked =
+                  selectableIds.length > 0 &&
+                  selectableIds.every((id) => selectedStockIds.includes(id));
+                const allAssigned = selectableIds.length === 0;
+                const expanded = expandedOutboundOrderIds.includes(orderId);
+                const missingCount = group.lines.filter(
+                  (line) => !(line.barcode || "").trim(),
+                ).length;
+                return (
+                  <div className="order-sub" key={orderId}>
+                    <div className="order-sub-head">
+                      <div className="order-sub-check">
+                        <label className="order-check">
+                          <input
+                            type="checkbox"
+                            disabled={allAssigned}
+                            checked={orderChecked || allAssigned}
+                            onChange={() => toggleStockOrder(group.lines[0])}
+                          />
+                        </label>
+                        <button
+                          type="button"
+                          className="order-ref-btn mono"
+                          onClick={() => toggleOutboundOrderExpanded(orderId)}
+                        >
+                          {group.orderRef}
+                        </button>
+                        <span className="muted"> · {group.lines.length} 行</span>
+                        {missingCount > 0 && (
+                          <span className="badge warn-badge">
+                            {missingCount} 件无条码
+                          </span>
+                        )}
+                        {stockBoxByOrderId.get(orderId) && (
+                          <span className="badge in_stock">
+                            库存箱 #{stockBoxByOrderId.get(orderId)!.box_no}
+                          </span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => toggleOutboundOrderExpanded(orderId)}
+                      >
+                        {expanded ? "收起" : "明细"}
+                      </button>
+                    </div>
+                    {expanded &&
+                      group.lines.map((line) => (
+                        <label
+                          key={line.id}
+                          className={
+                            assignedIds.has(line.id) ? "source-disabled" : ""
+                          }
+                        >
+                          <input
+                            type="checkbox"
+                            disabled={assignedIds.has(line.id)}
+                            checked={
+                              selectedStockIds.includes(line.id) ||
+                              assignedIds.has(line.id)
+                            }
+                            onChange={() => toggleStockOrder(line)}
+                          />
+                          {line.image_url ? (
+                            <img
+                              className="thumb"
+                              src={line.image_url}
+                              alt=""
+                              referrerPolicy="no-referrer"
+                            />
+                          ) : (
+                            <span className="thumb placeholder" />
+                          )}
+                          <span>
+                            {line.name}
+                            <span className="muted">
+                              {" "}
+                              · x{line.qty}
+                              {assignedIds.has(line.id) ? " · 已分箱" : ""}
+                              {!(line.barcode || "").trim() ? " · 无条码" : ""}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                  </div>
+                );
+              })
+            )}
           </div>
-          <button type="button" className="btn btn-primary" onClick={addDraftBox}>把已选行分配到新箱（{selectedStockIds.length}）</button>
+          <div className="toolbar">
+            <button type="button" className="btn btn-primary" onClick={addDraftBox}>
+              把已选行分配到新箱（{selectedStockIds.length}）
+            </button>
+            <button type="button" className="btn" onClick={applyStockBoxSuggestions}>
+              按合箱建议分箱
+            </button>
+          </div>
 
           <h2>2. 编辑箱子</h2>
-          {draftBoxes.length === 0 ? <div className="empty">尚未创建箱子</div> : draftBoxes.map((box, index) => {
-            const lines = stockLines.filter((line) => box.item_ids.includes(line.id));
-            return (
-              <article className="box-card" key={`${box.box_no}-${index}`}>
-                <div className="form-grid">
-                  <label>箱号<input type="number" min={1} value={box.box_no} onChange={(e) => updateDraftBox(index, { box_no: Number(e.target.value) || 1 })} /></label>
-                  <CarrierSelect value={box.carrier} onChange={(value) => updateDraftBox(index, { carrier: value })} />
-                  <label>快递单号 *<input value={box.tracking_no} onChange={(e) => updateDraftBox(index, { tracking_no: e.target.value })} /></label>
-                </div>
-                {groupLines(lines).map(([orderId, group]) => (
-                  <div className="order-sub" key={orderId}>
-                    <strong>{group.orderRef}</strong>
-                    <ul>{group.lines.map((line) => <li key={line.id}>{line.name} · x{line.qty} <button type="button" className="btn btn-danger" onClick={() => removeDraftLine(index, line.id)}>移出</button></li>)}</ul>
+          {draftBoxes.length === 0 ? (
+            <div className="empty">尚未创建箱子</div>
+          ) : (
+            draftBoxes.map((box, index) => {
+              const lines = stockLines.filter((line) =>
+                box.item_ids.includes(line.id),
+              );
+              const orderGroups = groupLines(lines);
+              const missingCount = lines.filter(
+                (line) => !(line.barcode || "").trim(),
+              ).length;
+              const boxExpanded = expandedDraftBoxUids.includes(box.uid);
+              return (
+                <article className="box-card" key={box.uid}>
+                  <div className="order-sub-head draft-box-head">
+                    <button
+                      type="button"
+                      className="order-ref-btn"
+                      onClick={() => toggleDraftBoxExpanded(box.uid)}
+                    >
+                      箱 {box.box_no}
+                    </button>
+                    <span className="muted">
+                      {" "}
+                      · {CARRIER_LABEL[box.carrier]}
+                      {box.tracking_no.trim()
+                        ? ` · ${box.tracking_no.trim()}`
+                        : " · 未填单号"}
+                      {" · "}
+                      {orderGroups.length} 单 · {lines.length} 行
+                    </span>
+                    {missingCount > 0 && (
+                      <span className="badge warn-badge">
+                        {missingCount} 件无条码
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() => toggleDraftBoxExpanded(box.uid)}
+                    >
+                      {boxExpanded ? "收起" : "明细"}
+                    </button>
                   </div>
-                ))}
-              </article>
-            );
-          })}
-          <label className="inline-filter">批次备注<input value={batchNote} onChange={(e) => setBatchNote(e.target.value)} /></label>
-          <button type="button" className="btn btn-primary" onClick={() => void onCreateOutbound()}>创建出库批次（{draftBoxes.length} 箱）</button>
+                  {boxExpanded && (
+                    <>
+                      <div className="form-grid">
+                        <label>
+                          箱号
+                          <input
+                            type="number"
+                            min={1}
+                            value={box.box_no}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                box_no: Number(e.target.value) || 1,
+                              })
+                            }
+                          />
+                        </label>
+                        <CarrierSelect
+                          value={box.carrier}
+                          onChange={(value) =>
+                            updateDraftBox(index, { carrier: value })
+                          }
+                        />
+                        <label>
+                          快递单号 *
+                          <input
+                            value={box.tracking_no}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                tracking_no: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                      </div>
+                      {orderGroups.map(([orderId, group]) => {
+                        const orderKey = `${box.uid}:${orderId}`;
+                        const orderExpanded =
+                          expandedDraftOrderKeys.includes(orderKey);
+                        const orderMissing = group.lines.filter(
+                          (line) => !(line.barcode || "").trim(),
+                        ).length;
+                        return (
+                          <div className="order-sub" key={orderId}>
+                            <div className="order-sub-head">
+                              <div className="order-sub-check">
+                                <button
+                                  type="button"
+                                  className="order-ref-btn mono"
+                                  onClick={() =>
+                                    toggleDraftOrderExpanded(box.uid, orderId)
+                                  }
+                                >
+                                  {group.orderRef}
+                                </button>
+                                <span className="muted">
+                                  {" "}
+                                  · {group.lines.length} 行
+                                </span>
+                                {orderMissing > 0 && (
+                                  <span className="badge warn-badge">
+                                    {orderMissing} 件无条码
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() =>
+                                  toggleDraftOrderExpanded(box.uid, orderId)
+                                }
+                              >
+                                {orderExpanded ? "收起" : "明细"}
+                              </button>
+                            </div>
+                            {orderExpanded && (
+                              <ul>
+                                {group.lines.map((line) => (
+                                  <li key={line.id}>
+                                    {line.name} · x{line.qty}
+                                    {!(line.barcode || "").trim() && (
+                                      <span className="warn-text">
+                                        {" "}
+                                        · 无条码
+                                      </span>
+                                    )}{" "}
+                                    <BarcodeInput
+                                      value={line.barcode || ""}
+                                      onSave={(barcode) =>
+                                        void onUpdateLine(line.id, { barcode })
+                                      }
+                                    />{" "}
+                                    <button
+                                      type="button"
+                                      className="btn btn-danger"
+                                      onClick={() =>
+                                        removeDraftLine(index, line.id)
+                                      }
+                                    >
+                                      移出
+                                    </button>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </>
+                  )}
+                </article>
+              );
+            })
+          )}
+          {draftMissingBarcodeLines.length > 0 && (
+            <div className="warn-banner">
+              当前装箱中有 {draftMissingBarcodeLines.length} 行未登记条形码，创建批次前须补齐，或勾选特殊情况并备注。
+            </div>
+          )}
+          <label className="inline-filter">
+            批次备注
+            <input
+              value={batchNote}
+              onChange={(e) => setBatchNote(e.target.value)}
+            />
+          </label>
+          <div className="form-grid">
+            <label>
+              运费汇率（国际）
+              <input
+                type="number"
+                min={0}
+                step="0.0001"
+                value={freightExchangeRate}
+                placeholder="可后补"
+                onChange={(e) => setFreightExchangeRate(e.target.value)}
+              />
+            </label>
+            <label>
+              运费单价（JPY）
+              <input
+                type="number"
+                min={0}
+                step="1"
+                value={freightUnitPrice}
+                placeholder="可后补"
+                onChange={(e) => setFreightUnitPrice(e.target.value)}
+              />
+            </label>
+            <label>
+              计费重量
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={chargeableWeight}
+                placeholder="可后补"
+                onChange={(e) => setChargeableWeight(e.target.value)}
+              />
+            </label>
+          </div>
+          <label className="inline-check">
+            <input
+              type="checkbox"
+              checked={outboundAllowMissingBarcode}
+              onChange={(e) => setOutboundAllowMissingBarcode(e.target.checked)}
+            />
+            特殊情况：允许无条形码出库
+          </label>
+          {outboundAllowMissingBarcode && (
+            <label className="inline-filter">
+              特殊情况备注 *
+              <input
+                value={outboundMissingBarcodeNote}
+                placeholder="说明为何无条码仍出库"
+                onChange={(e) => setOutboundMissingBarcodeNote(e.target.value)}
+              />
+            </label>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => void onCreateOutbound()}
+          >
+            创建出库批次（{draftBoxes.length} 箱）
+          </button>
 
           <h2>已有出库批次</h2>
           {batches.length === 0 ? <div className="empty">暂无出库批次</div> : batches.map((batch) => (
             <article className="ship-card" key={batch.id}>
               <header>
-                <div><strong>批次 #{batch.id}</strong><span className="muted"> · {batch.box_count} 箱 · {batch.item_count} 行 · {formatDate(batch.created_at)}</span>{batch.note && <div>{batch.note}</div>}</div>
-                {batch.boxes.some((box) => box.status === "shipped") && <button type="button" className="btn btn-primary" onClick={() => void onConfirmBatch(batch.id)}>确认整批签收</button>}
+                <div>
+                  <strong>批次 #{batch.id}</strong>
+                  <span className="muted">
+                    {" "}
+                    · {batch.box_count} 箱 · {batch.item_count} 行 ·{" "}
+                    {formatDate(batch.created_at)}
+                  </span>
+                  <span className={`badge ${batch.payment_status}`}>
+                    {PAYMENT_LABEL[batch.payment_status] || batch.payment_status}
+                  </span>
+                  {batch.note && <div>{batch.note}</div>}
+                  <div className="muted">
+                    货款CNY {moneyText(batch.goods_receivable_cny)} · 运费CNY{" "}
+                    {moneyText(batch.freight_cny)} · 应收{" "}
+                    {moneyText(batch.amount_receivable_cny)} · 已收{" "}
+                    {moneyText(batch.amount_received_cny, "0")} · 未收{" "}
+                    {moneyText(batch.amount_unreceived_cny)}
+                  </div>
+                </div>
+                <div className="toolbar">
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() =>
+                      void downloadOutboundFeeDetail(batch.id).catch((err) =>
+                        setError(errorText(err)),
+                      )
+                    }
+                  >
+                    费用明细 Excel
+                  </button>
+                  {batch.boxes.some((box) => box.status === "shipped") && (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      onClick={() => void onConfirmBatch(batch.id)}
+                    >
+                      确认整批签收
+                    </button>
+                  )}
+                </div>
               </header>
+              <form
+                className="form-grid"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void onSaveBatchFreight(batch, e.currentTarget);
+                }}
+              >
+                <label>
+                  运费汇率
+                  <input
+                    name="freight_rate"
+                    type="number"
+                    min={0}
+                    step="0.0001"
+                    defaultValue={batch.freight_exchange_rate ?? ""}
+                  />
+                </label>
+                <label>
+                  运费单价JPY
+                  <input
+                    name="freight_unit"
+                    type="number"
+                    min={0}
+                    step="1"
+                    defaultValue={batch.freight_unit_price_jpy ?? ""}
+                  />
+                </label>
+                <label>
+                  计费重量
+                  <input
+                    name="freight_weight"
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    defaultValue={batch.chargeable_weight ?? ""}
+                  />
+                </label>
+                <label className="full">
+                  <button type="submit" className="btn">
+                    保存国际运费
+                  </button>
+                </label>
+              </form>
+              <div className="toolbar">
+                <label className="inline-filter">
+                  已收款（CNY）
+                  <input
+                    type="number"
+                    min={0}
+                    step="0.01"
+                    value={batchReceivedDraft[batch.id] ?? "0"}
+                    onChange={(e) =>
+                      setBatchReceivedDraft((current) => ({
+                        ...current,
+                        [batch.id]: e.target.value,
+                      }))
+                    }
+                  />
+                </label>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void onSaveBatchReceived(batch)}
+                >
+                  登记收款
+                </button>
+              </div>
               {batch.boxes.map((box) => (
                 <div className="box-card" key={box.id}>
                   <strong>箱 {box.box_no}</strong> · {CARRIER_LABEL[box.carrier]} · <span className="mono">{box.tracking_no}</span> · <span className={`badge ${box.status === "delivered" ? "delivered" : "outbound_shipped"}`}>{box.status === "delivered" ? "已签收" : "运输中"}</span>
@@ -1983,6 +3151,7 @@ function OrderCard({
   onQty,
   onCancelLine,
   onShippingFee,
+  onExchangeRate,
   onOrderRef,
 }: {
   order: Order;
@@ -1995,16 +3164,23 @@ function OrderCard({
   onQty: (id: number, qty: number) => void;
   onCancelLine: (id: number) => void;
   onShippingFee: (fee: number | null) => void;
+  onExchangeRate: (rate: number | null) => void;
   onOrderRef: (orderRef: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [feeDraft, setFeeDraft] = useState(
     order.shipping_fee != null ? String(order.shipping_fee) : "0",
   );
+  const [rateDraft, setRateDraft] = useState(
+    order.exchange_rate != null ? String(order.exchange_rate) : "",
+  );
   const [refDraft, setRefDraft] = useState(order.order_ref || "");
   useEffect(() => {
     setFeeDraft(order.shipping_fee != null ? String(order.shipping_fee) : "0");
   }, [order.shipping_fee]);
+  useEffect(() => {
+    setRateDraft(order.exchange_rate != null ? String(order.exchange_rate) : "");
+  }, [order.exchange_rate]);
   useEffect(() => {
     setRefDraft(order.order_ref || "");
   }, [order.order_ref]);
@@ -2029,6 +3205,17 @@ function OrderCard({
     if (normalized !== prev) onShippingFee(normalized);
   }
 
+  function commitRate() {
+    const text = rateDraft.trim();
+    if (!text) {
+      if (order.exchange_rate != null) onExchangeRate(null);
+      return;
+    }
+    const next = Number(text);
+    if (Number.isNaN(next) || next <= 0) return;
+    if (next !== order.exchange_rate) onExchangeRate(next);
+  }
+
   function commitOrderRef() {
     const next = refDraft.trim();
     if (next !== (order.order_ref || "")) onOrderRef(next);
@@ -2039,6 +3226,9 @@ function OrderCard({
     setFeeDraft(
       order.shipping_fee != null ? String(order.shipping_fee) : "0",
     );
+    setRateDraft(
+      order.exchange_rate != null ? String(order.exchange_rate) : "",
+    );
     setEditing(true);
     onEnsureExpanded();
   }
@@ -2046,6 +3236,7 @@ function OrderCard({
   function finishEditing() {
     commitOrderRef();
     commitFee();
+    commitRate();
     setEditing(false);
   }
 
@@ -2099,8 +3290,29 @@ function OrderCard({
             · {order.line_count}行/{order.total_qty}件
           </span>
         </span>
+        {editing ? (
+          <label className="order-fee-inline order-cell-rate">
+            <input
+              type="number"
+              min={0}
+              step="0.0001"
+              value={rateDraft}
+              placeholder="—"
+              onClick={(e) => e.stopPropagation()}
+              onChange={(e) => setRateDraft(e.target.value)}
+              onBlur={commitRate}
+            />
+          </label>
+        ) : (
+          <span className="order-cell-rate">
+            {order.exchange_rate != null ? order.exchange_rate : "—"}
+          </span>
+        )}
         <span className="order-cell-goods">
           {order.goods_total != null ? order.goods_total : "—"}
+          {order.goods_total_cny != null && (
+            <span className="muted block-mini">¥{order.goods_total_cny}</span>
+          )}
         </span>
         {editing ? (
           <label className="order-fee-inline order-cell-fee">
@@ -2118,10 +3330,16 @@ function OrderCard({
         ) : (
           <span className="order-cell-fee">
             {order.shipping_fee != null ? order.shipping_fee : 0}
+            {order.shipping_fee_cny != null && (
+              <span className="muted block-mini">¥{order.shipping_fee_cny}</span>
+            )}
           </span>
         )}
         <span className="strong order-cell-total">
           {order.order_total != null ? order.order_total : "—"}
+          {order.order_total_cny != null && (
+            <span className="muted block-mini">¥{order.order_total_cny}</span>
+          )}
         </span>
         <span className="ellipsis order-cell-ship">
           {order.expected_ship_at
@@ -2153,7 +3371,7 @@ function OrderCard({
             )}
             {order.note && <span className="muted">备注：{order.note}</span>}
             {!editing && (
-              <span className="muted">点「编辑」后可改订单号 / 运费 / 数量 / 条码</span>
+              <span className="muted">点「编辑」后可改订单号 / 汇率 / 运费 / 数量 / 条码</span>
             )}
           </div>
           {order.lines.map((line) => (

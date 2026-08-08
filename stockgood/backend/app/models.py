@@ -70,6 +70,7 @@ class OrderCreate(BaseModel):
     shop: str = ""
     order_qty: Optional[int] = None
     shipping_fee: Optional[float] = Field(default=None, ge=0)
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
     order_image_url: str = ""
     note: str = ""
     expected_ship_at: Optional[str] = None
@@ -82,6 +83,8 @@ class OrderUpdate(BaseModel):
     shop: Optional[str] = None
     order_qty: Optional[int] = None
     shipping_fee: Optional[float] = Field(default=None, ge=0)
+    # None clears rate; positive validated in service
+    exchange_rate: Optional[float] = None
     order_image_url: Optional[str] = None
     note: Optional[str] = None
     expected_ship_at: Optional[str] = None
@@ -97,6 +100,7 @@ class OrderOut(BaseModel):
     ordered_at: str
     order_qty: Optional[int] = None
     shipping_fee: Optional[float] = None
+    exchange_rate: Optional[float] = None
     order_image_url: str = ""
     note: str = ""
     expected_ship_at: Optional[str] = None
@@ -105,6 +109,9 @@ class OrderOut(BaseModel):
     total_qty: int = 0
     goods_total: Optional[float] = None
     order_total: Optional[float] = None
+    goods_total_cny: Optional[float] = None
+    shipping_fee_cny: Optional[float] = None
+    order_total_cny: Optional[float] = None
     lines: list[LineOut] = []
 
 
@@ -245,6 +252,19 @@ class OutboundBoxCreate(BaseModel):
 class OutboundBatchCreate(BaseModel):
     note: str = ""
     boxes: list[OutboundBoxCreate] = Field(min_length=1)
+    allow_missing_barcode: bool = False
+    missing_barcode_note: str = ""
+    freight_exchange_rate: Optional[float] = Field(default=None, gt=0)
+    freight_unit_price_jpy: Optional[float] = Field(default=None, ge=0)
+    chargeable_weight: Optional[float] = Field(default=None, ge=0)
+
+
+class OutboundBatchFinanceUpdate(BaseModel):
+    freight_exchange_rate: Optional[float] = Field(default=None, gt=0)
+    freight_unit_price_jpy: Optional[float] = Field(default=None, ge=0)
+    chargeable_weight: Optional[float] = Field(default=None, ge=0)
+    amount_received_cny: Optional[float] = Field(default=None, ge=0)
+    payment_note: Optional[str] = None
 
 
 class OutboundBoxOut(BaseModel):
@@ -268,6 +288,93 @@ class OutboundBatchOut(BaseModel):
     boxes: list[OutboundBoxOut] = []
     box_count: int = 0
     item_count: int = 0
+    goods_jpy: Optional[float] = None
+    order_shipping_jpy: Optional[float] = None
+    goods_receivable_cny: Optional[float] = None
+    freight_exchange_rate: Optional[float] = None
+    freight_unit_price_jpy: Optional[float] = None
+    chargeable_weight: Optional[float] = None
+    freight_cny: Optional[float] = None
+    amount_receivable_cny: Optional[float] = None
+    amount_received_cny: float = 0
+    amount_unreceived_cny: Optional[float] = None
+    payment_status: Literal["unpaid", "partial", "paid"] = "unpaid"
+    payment_note: str = ""
+
+
+class FinanceMonthBucket(BaseModel):
+    goods_jpy: float = 0
+    shipping_jpy: float = 0
+    total_jpy: float = 0
+    goods_cny: Optional[float] = None
+    shipping_cny: Optional[float] = None
+    total_cny: Optional[float] = None
+    order_count: int = 0
+    missing_rate_count: int = 0
+
+
+class FinanceOutboundBucket(BaseModel):
+    goods_jpy: float = 0
+    goods_receivable_cny: Optional[float] = None
+    freight_cny: Optional[float] = None
+    amount_receivable_cny: Optional[float] = None
+    amount_received_cny: float = 0
+    amount_unreceived_cny: Optional[float] = None
+    batch_count: int = 0
+
+
+class FinanceSummaryOut(BaseModel):
+    month: str
+    ordered: FinanceMonthBucket
+    outbound: FinanceOutboundBucket
+
+
+class StockBoxLineOut(BaseModel):
+    id: int
+    order_id: int
+    name: str
+    shop: str = ""
+    order_ref: str = ""
+    qty: int
+    status: ItemStatus
+    image_url: str = ""
+    barcode: str = ""
+
+
+class StockBoxOrderOut(BaseModel):
+    id: int
+    order_ref: str = ""
+    shop: str = ""
+    status: OrderStatus
+    line_count: int = 0
+    total_qty: int = 0
+    lines: list[StockBoxLineOut] = []
+
+
+class StockBoxCreate(BaseModel):
+    order_ids: list[int] = Field(min_length=1)
+    note: str = ""
+    box_no: Optional[int] = Field(default=None, ge=1)
+
+
+class StockBoxUpdate(BaseModel):
+    note: Optional[str] = None
+    box_no: Optional[int] = Field(default=None, ge=1)
+
+
+class StockBoxOrdersPayload(BaseModel):
+    order_ids: list[int] = Field(min_length=1)
+
+
+class StockBoxOut(BaseModel):
+    id: int
+    box_no: int
+    note: str = ""
+    created_at: str
+    order_ids: list[int] = []
+    order_count: int = 0
+    item_count: int = 0
+    orders: list[StockBoxOrderOut] = []
 
 
 class StatsOut(BaseModel):
@@ -315,6 +422,7 @@ class OrderRequestConfirm(BaseModel):
     staff_note: str = ""
     create_stock_order: bool = True
     shipping_fee: Optional[float] = Field(default=0, ge=0)
+    exchange_rate: Optional[float] = Field(default=None, gt=0)
 
 
 class OrderRequestReject(BaseModel):
