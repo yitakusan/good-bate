@@ -1,6 +1,9 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
+const apiProxy =
+  process.env.STOCKGOOD_API_PROXY || "http://127.0.0.1:8002";
+
 export default defineConfig({
   plugins: [react()],
   appType: "spa",
@@ -11,11 +14,11 @@ export default defineConfig({
     allowedHosts: [".trycloudflare.com", "localhost", ".local"],
     proxy: {
       "/api": {
-        target: "http://127.0.0.1:8002",
+        target: apiProxy,
         changeOrigin: true,
       },
       "/media": {
-        target: "http://127.0.0.1:8002",
+        target: apiProxy,
         changeOrigin: true,
       },
     },

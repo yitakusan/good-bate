@@ -30,7 +30,7 @@ PRICE_RE = re.compile(
 )
 
 _RELEASE_RE = re.compile(
-    r"(?:商品のお届け|お届け時期|お届け予定日|配送時期|配送予定|発売予定日|発売日|発送予定|出荷予定)"
+    r"(?:商品のお届け|お届け時期|お届け予定日|お届けは|配送時期|配送予定|発売予定日|発売日|発送予定|出荷予定)"
     r"[^。．\n\r]*?(?:(\d{4})年)?\s*(\d{1,2})月\s*(上旬|中旬|下旬|\d{1,2}日)?",
 )
 
@@ -234,15 +234,28 @@ async def _fetch_retailer_html(
     raise RetailerAccessBlockedError(shop)
 
 
+def _is_bushiroad_host(host_or_url: str) -> bool:
+    text = (host_or_url or "").lower()
+    return "bushiroad-store.com" in text
+
+
+def _bushiroad_tax_inclusive(price: float) -> float:
+    """Bushiroad Shopify JSON price is 税抜; storefront shows 税込 (10%)."""
+    return round(float(price) * 1.1, 2)
+
+
 def _shopify_product_json_url(url: str) -> Optional[str]:
-    path = urlparse(url).path
-    if "/products/" not in path:
+    """Canonical /products/{handle}.json (works for /collections/.../products/ too)."""
+    parsed = urlparse(url)
+    m = re.search(r"/products/([^/?#]+)", parsed.path)
+    if not m:
         return None
-    # strip query; append .json to product path
-    base = url.split("?")[0].rstrip("/")
-    if base.endswith(".json"):
-        return base
-    return base + ".json"
+    handle = m.group(1)
+    if handle.endswith(".json"):
+        handle = handle[: -len(".json")]
+    if not handle:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/products/{handle}.json"
 
 
 def _shopify_collection_json_url(url: str) -> Optional[str]:
@@ -330,6 +343,8 @@ def _from_shopify_product(item: dict[str, Any], shop_host: str, base: str) -> di
     release_date = _extract_release_from_text(body) if body else None
     source_url = f"{base}/products/{handle}" if handle else base
     barcode = extract_jan_from_shopify_product(item) or ""
+    if _is_bushiroad_host(shop_host) and unit_cost is not None:
+        unit_cost = _bushiroad_tax_inclusive(unit_cost)
     return _product_dict(
         name=title,
         source_url=source_url,
@@ -340,6 +355,31 @@ def _from_shopify_product(item: dict[str, Any], shop_host: str, base: str) -> di
         search_text=search_text,
         release_date=release_date,
     )
+
+
+async def _enrich_bushiroad_preorder(
+    client: httpx.AsyncClient, url: str, product: dict[str, Any]
+) -> dict[str, Any]:
+    """HTML page carries お届け日 for preorders; JSON body_html often does not."""
+    if not _is_bushiroad_host(product.get("shop") or url):
+        return product
+    if product.get("expected_ship_at"):
+        return product
+    try:
+        resp = await _fetch(client, url.split("?")[0])
+        if resp.status_code != 200:
+            return product
+        text = BeautifulSoup(resp.text, "html.parser").get_text(" ", strip=True)
+        release = _extract_release_from_text(text)
+        if not release:
+            return product
+        ship_at, ship_period = map_release_to_expected_ship(release)
+        product["release_date"] = release
+        product["expected_ship_at"] = ship_at
+        product["expected_ship_period"] = ship_period
+    except Exception:
+        return product
+    return product
 
 
 async def _scrape_shopify_product(
@@ -825,8 +865,20 @@ async def scrape_url(url: str) -> dict[str, Any]:
                 "message": f"已从店铺解析 {len(shop_items)} 件（最多 250 件），勾选后批量导入",
             }
 
+        # Single product first — including /collections/.../products/{handle}
+        path = urlparse(url).path
+        if "/products/" in path:
+            product = await _scrape_shopify_product(client, url)
+            if product:
+                product = await _enrich_bushiroad_preorder(client, url, product)
+                return {
+                    "kind": "list",
+                    "products": [product],
+                    "message": "已从 Shopify 商品页抓取 1 件，勾选后批量导入",
+                }
+
         # Collection / series page (Shopify first — best for multi-character sets)
-        if "/collections/" in urlparse(url).path:
+        if "/collections/" in path:
             items = await _scrape_shopify_collection(client, url)
             if items:
                 return {
@@ -835,15 +887,7 @@ async def scrape_url(url: str) -> dict[str, Any]:
                     "message": f"已从系列页解析 {len(items)} 件（Shopify），勾选后批量导入",
                 }
 
-        # Single product: Shopify JSON then HTML fallback
-        product = await _scrape_shopify_product(client, url)
-        if product:
-            return {
-                "kind": "list",
-                "products": [product],
-                "message": "已从 Shopify 商品页抓取 1 件，勾选后批量导入",
-            }
-
+        # HTML fallback for single product
         try:
             product = await _scrape_html(client, url)
         except RetailerAccessBlockedError as exc:
@@ -857,6 +901,8 @@ async def scrape_url(url: str) -> dict[str, Any]:
                 "已自动重试，请稍后 1–2 分钟再试。"
             ) from exc
         if product:
+            if _is_bushiroad_host(url):
+                product = await _enrich_bushiroad_preorder(client, url, product)
             return {
                 "kind": "list",
                 "products": [product],

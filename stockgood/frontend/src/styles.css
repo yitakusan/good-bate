@@ -1655,6 +1655,43 @@ th {
 
 .apply-hero {
   margin-bottom: 28px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.apply-hero-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.apply-account {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding-top: 0.2rem;
+  font-size: 0.92rem;
+}
+
+.apply-account-name {
+  color: var(--text);
+  font-weight: 560;
+  max-width: 10em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.apply-account-link {
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.apply-account-link:hover {
+  text-decoration: underline;
 }
 
 .apply-brand {
@@ -1839,6 +1876,11 @@ th {
   padding: 10px 12px;
 }
 
+.apply-order-head-deposit,
+.apply-order-row-deposit {
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+}
+
 .apply-order-row {
   border-top: 1px solid var(--line);
   background: var(--bg-row);
@@ -1945,6 +1987,17 @@ th {
 }
 
 @media (max-width: 640px) {
+  .apply-hero {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .apply-account {
+    justify-content: flex-end;
+    padding-top: 0;
+    order: -1;
+  }
+
   .apply-form {
     flex-direction: column;
     align-items: stretch;
@@ -1958,3 +2011,22 @@ th {
     flex-direction: column;
   }
 }
+
+.auth-panel { max-width: 420px; margin: 1rem auto; }
+.auth-form { display: grid; gap: 0.75rem; }
+.auth-form label { display: grid; gap: 0.25rem; }
+.auth-switch { margin-top: 0.75rem; }
+button.linkish {
+  background: none; border: none; color: inherit; text-decoration: underline;
+  cursor: pointer; padding: 0; font: inherit;
+}
+.me-actions { display: flex; gap: 0.75rem; align-items: center; }
+.me-deposit-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  align-items: center;
+  margin-top: 0.65rem;
+}
+.request-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
+.request-card { border: 1px solid rgba(0,0,0,0.08); padding: 0.75rem; }

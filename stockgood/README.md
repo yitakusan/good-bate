@@ -4,6 +4,34 @@
 
 当前版本见根目录 [`VERSION`](VERSION)；变更说明见 [`CHANGELOG.md`](CHANGELOG.md)。
 
+## 产品定位（可服务器化 · 模式 B）
+
+**目标**：单团队长期运营；员工 + 客户账号；**不做**多租户 / 自动下单。当前约 **v0.9.2**。
+
+### 已落地
+
+| 项 | 说明 |
+|---|---|
+| 部署 | Docker Compose、Nginx、备份脚本；见 [`docs/deploy.md`](docs/deploy.md) |
+| 账号 | Cookie 登录；角色 `admin` / `warehouse` / `finance` / `customer`；客户门户 `/me` |
+| 申请 | 须登录；「待付定金」（商品金额 30%）→ 确认付款后才变为「已提交」 |
+| 双编号 | 全站 `SG-0001…`（后台台账/统计）+ 账户 `SGuid-0001…`（用户端只显示账户流水） |
+| 统计 | 后台「统计」Tab：日/月单量、热门链接、花费用户、商品 IP |
+
+### 明确未做
+
+- 自动下单 / 付款对接
+- 多租户 SaaS
+- 真实支付网关（现为手动「确认已付定金」占位）
+
+### 本地测试（影子库）
+
+| 地址 / 账号 | 用途 |
+|---|---|
+| API `http://localhost:8003` | 影子库后端 |
+| 前端热更新 `http://localhost:5175` | 开发界面（**不要**用 `8003/apply` 看开发页） |
+| `customer@stockgood.local` / `Customer12` | 客户示例账号 |
+
 ## 能力
 
 | 能力 | 说明 |
@@ -48,11 +76,36 @@ npm install
 start.bat
 ```
 
-后台静默启动（无常驻 CMD 窗口），日志在 `logs\`。
+后台静默启动（无常驻 CMD 窗口），日志在 `logs\`，并会打开浏览器。
+
+#### 系统托盘（推荐日常 / 开机自启）
+
+```bat
+start-tray.bat
+```
+
+- 右下角托盘常驻（青绿色图标）
+- 菜单：打开界面 / 打开 API 文档 / 停止并退出
+- **不**自动打开浏览器；默认生产库
+- 退出托盘会停止 8002 / 5174 并做库备份
+- 日志：`logs\tray.log`（另有 backend/frontend 日志）
+
+开机自启（当前 Windows 用户，登录后启动托盘）：
+
+```bat
+install-autostart.bat
+```
+
+取消自启：
+
+```bat
+uninstall-autostart.bat
+```
 
 | 启动 | 数据库 |
 |---|---|
 | `start.bat` | 实际库存 `stockgood.sqlite` |
+| `start-tray.bat` | 实际库存（托盘；可用环境变量 `STOCKGOOD_DB_MODE=shadow`） |
 | `start-shadow.bat` | 测试影子库 `stockgood.shadow.sqlite`（采购导入等，不参与实库存） |
 
 一键关闭：
@@ -60,6 +113,8 @@ start.bat
 ```bat
 stop.bat
 ```
+
+（托盘运行时也可用托盘「停止并退出」，或 `stop.bat` 后再关托盘。）
 
 | 地址 | 用途 |
 |---|---|
@@ -84,7 +139,13 @@ stop.bat
 
 若出现 `Blocked request. This host is not allowed`：请重启前端（`stop.bat` 后再 `start.bat` / `start-tunnel.bat`）。`vite.config.ts` 已允许 `*.trycloudflare.com`。
 
-可选：在 `backend/.env` 设置 `STOCKGOOD_ADMIN_TOKEN=...`，则管理端写操作需在页面保存同一口令（请求头 `X-Admin-Token`）。公开 scrape / 提交申请有 IP 限流。
+可选：在 `backend/.env` 设置 `STOCKGOOD_ADMIN_TOKEN=...`（兼容旧口令），或配置用户登录（见下）。公开 scrape / 提交申请有 IP 限流。
+
+### 账号与服务器部署
+
+- **本地默认**：无员工账号、未强制 `STOCKGOOD_AUTH_REQUIRED` 时，员工 API 仍可无登录使用。
+- **登录**：员工在管理页登录（角色 `admin` / `warehouse` / `finance`）；客户 `/me` 注册/登录；申请 `/apply` **须登录**，提交后为「待付定金」，确认付款后才「已提交」。
+- **服务器**：见 [`docs/deploy.md`](docs/deploy.md)（Docker Compose + Nginx + 日备）。首启用 `STOCKGOOD_BOOTSTRAP_ADMIN_EMAIL` / `PASSWORD` 创建管理员。
 
 ## 使用流程
 

@@ -1,9 +1,14 @@
 import { useEffect, useState } from "react";
 
 import {
+  AuthUser,
   OrderRequestPublic,
   ScrapeProduct,
+  confirmDeposit,
   createOrderRequest,
+  fetchMe,
+  fetchMeta,
+  fetchMyOrderRequests,
   fetchPublicOrderRequests,
   publicScrapeUrl,
 } from "./api";
@@ -19,8 +24,7 @@ function formatYen(value: number | null | undefined) {
 }
 
 function orderNo(req: OrderRequestPublic) {
-  const ref = (req.shop_order_ref || "").trim();
-  return ref || "待下单";
+  return (req.account_order_no || req.request_code || "").trim() || "—";
 }
 
 function amountOf(req: OrderRequestPublic) {
@@ -64,6 +68,10 @@ export default function ApplyPage() {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [depositRate, setDepositRate] = useState(0.3);
+  const [pendingMine, setPendingMine] = useState<OrderRequestPublic[]>([]);
+  const [depositBusy, setDepositBusy] = useState("");
 
   const [requests, setRequests] = useState<OrderRequestPublic[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
@@ -82,10 +90,70 @@ export default function ApplyPage() {
     }
   }
 
+  async function loadPendingMine(user = authUser) {
+    if (!user) {
+      setPendingMine([]);
+      return;
+    }
+    try {
+      setPendingMine(await fetchMyOrderRequests("pending_payment"));
+    } catch {
+      setPendingMine([]);
+    }
+  }
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const meta = await fetchMeta();
+        setAuthUser(meta.user ?? null);
+        if (typeof meta.deposit_rate === "number" && meta.deposit_rate > 0) {
+          setDepositRate(meta.deposit_rate);
+        }
+        await loadPendingMine(meta.user ?? null);
+      } catch {
+        try {
+          setAuthUser(await fetchMe());
+        } catch {
+          setAuthUser(null);
+        }
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     void loadRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
+
+  const selectedDepositTotal = (() => {
+    let goods = 0;
+    let missing = 0;
+    for (const index of collectionPick) {
+      const product = collection[index];
+      if (!product) continue;
+      const priceText = (collectionPrice[index] || "").trim();
+      const unit =
+        priceText === ""
+          ? product.unit_cost
+          : Number.isFinite(Number(priceText))
+            ? Number(priceText)
+            : product.unit_cost;
+      const qty = Math.max(1, Number(collectionQty[index]) || 1);
+      if (unit == null || !Number.isFinite(unit)) {
+        missing += 1;
+        continue;
+      }
+      goods += unit * qty;
+    }
+    return {
+      goods,
+      deposit: Math.round(goods * depositRate * 100) / 100,
+      missing,
+      ratePct: Math.round(depositRate * 100),
+    };
+  })();
 
   function appendScrapeProducts(
     products: ScrapeProduct[],
@@ -201,8 +269,16 @@ export default function ApplyPage() {
   }
 
   async function onSubmitRequests() {
+    if (!authUser) {
+      setError("请先登录后再提交订单");
+      return;
+    }
     if (!collectionPick.length) {
       setError("请至少勾选一件");
+      return;
+    }
+    if (selectedDepositTotal.missing > 0) {
+      setError("所选商品须填写单价，才能计算 30% 定金");
       return;
     }
     setScrapeBusy(true);
@@ -240,9 +316,12 @@ export default function ApplyPage() {
         }
       }
       if (ok) {
-        setMessage(`已提交 ${ok} 条订单申请`);
+        setMessage(
+          `已创建 ${ok} 条待付定金申请（需付定金合计约 ${formatYen(selectedDepositTotal.deposit)}）。确认付款后才会正式提交。`,
+        );
         clearCollection();
         setScrapeUrlValue("");
+        await loadPendingMine();
         await loadRequests();
       }
       if (failures.length) {
@@ -253,22 +332,85 @@ export default function ApplyPage() {
     }
   }
 
+  async function onConfirmDeposit(code: string) {
+    setDepositBusy(code);
+    setError("");
+    try {
+      await confirmDeposit(code);
+      setMessage(`定金已确认，${code} 已正式提交`);
+      await loadPendingMine();
+      await loadRequests();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setDepositBusy("");
+    }
+  }
+
+  async function onConfirmAllDeposits() {
+    if (!pendingMine.length) return;
+    setScrapeBusy(true);
+    setError("");
+    let ok = 0;
+    try {
+      for (const req of pendingMine) {
+        try {
+          await confirmDeposit(req.request_code);
+          ok += 1;
+        } catch (err) {
+          setError(`${req.request_code} → ${errorText(err)}`);
+          break;
+        }
+      }
+      if (ok) setMessage(`已确认 ${ok} 笔定金并正式提交`);
+      await loadPendingMine();
+      await loadRequests();
+    } finally {
+      setScrapeBusy(false);
+    }
+  }
+
   return (
     <div className="apply-page apply-page-wide">
       <header className="apply-hero">
-        <p className="apply-brand">Stockgood</p>
-        <h1>订单申请</h1>
-        <p className="apply-lead">
-          批量粘贴商品链接抓取后勾选提交；下方可查看已申请订单进度。
-        </p>
+        <div className="apply-hero-main">
+          <p className="apply-brand">Stockgood</p>
+          <h1>订单申请</h1>
+          <p className="apply-lead">
+            批量粘贴商品链接抓取后勾选提交；下方可查看已申请订单进度。
+          </p>
+        </div>
+        <div className="apply-account">
+          {authUser ? (
+            <>
+              <span className="apply-account-name" title={authUser.email}>
+                {authUser.display_name || authUser.email}
+              </span>
+              <a className="apply-account-link" href="/me">
+                下单历史
+              </a>
+            </>
+          ) : (
+            <a className="apply-account-link" href="/me">
+              登录查看我的申请
+            </a>
+          )}
+        </div>
       </header>
 
       <section className="apply-panel">
         <h2>提交申请</h2>
         <p className="muted">
-          支持批量粘贴多个商品/系列/店铺链接（每行一个，也可用逗号分隔）。
-          结果会累加到同一清单；勾选后点「提交申请」。
+          须登录后提交。创建后为「待付定金」，支付商品金额 {Math.round(depositRate * 100)}%
+          定金并确认后才会正式提交（后续对接财务系统自动确认）。
         </p>
+        {!authUser ? (
+          <p className="error">
+            未登录不可提交。请先{" "}
+            <a href="/me">登录 / 注册</a>
+            。
+          </p>
+        ) : null}
         <div className="scrape-bar scrape-bar-batch">
           <label className="grow">
             URL 列表
@@ -325,8 +467,10 @@ export default function ApplyPage() {
             </div>
             <div className="toolbar">
               <span className="muted">
-                清单 {collection.length} 条，已选 {collectionPick.length} →
-                将提交为订单申请
+                清单 {collection.length} 条，已选 {collectionPick.length}
+                {collectionPick.length > 0
+                  ? ` · 商品合计 ${formatYen(selectedDepositTotal.goods)} · 定金 ${selectedDepositTotal.ratePct}% ${formatYen(selectedDepositTotal.deposit)}`
+                  : ""}
               </span>
               <button
                 type="button"
@@ -347,10 +491,11 @@ export default function ApplyPage() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={scrapeBusy}
+                disabled={scrapeBusy || !authUser}
                 onClick={() => void onSubmitRequests()}
+                title={!authUser ? "请先登录" : undefined}
               >
-                {scrapeBusy ? "提交中…" : "提交申请"}
+                {scrapeBusy ? "提交中…" : "创建待付定金申请"}
               </button>
             </div>
             <div className="collection-list">
@@ -451,6 +596,48 @@ export default function ApplyPage() {
         )}
       </section>
 
+      {authUser && pendingMine.length > 0 ? (
+        <section className="apply-panel">
+          <div className="apply-list-head">
+            <h2>待付定金</h2>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={scrapeBusy}
+              onClick={() => void onConfirmAllDeposits()}
+            >
+              全部确认已付并提交
+            </button>
+          </div>
+          <p className="muted">
+            财务系统对接前，可手动确认定金（{Math.round(depositRate * 100)}%）。确认后订单才会进入「已提交」。
+          </p>
+          <div className="order-table apply-order-table">
+            <div className="order-table-head apply-order-head apply-order-head-deposit">
+              <span>订单号</span>
+              <span>定金</span>
+              <span />
+            </div>
+            {pendingMine.map((req) => (
+              <div className="apply-order-row apply-order-row-deposit" key={req.request_code}>
+                <span className="apply-order-ref" title={req.name}>
+                  {orderNo(req)}
+                </span>
+                <span>{formatYen(req.deposit_amount)}</span>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={depositBusy === req.request_code || scrapeBusy}
+                  onClick={() => void onConfirmDeposit(req.request_code)}
+                >
+                  {depositBusy === req.request_code ? "确认中…" : "确认已付定金"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
       <section className="apply-panel">
         <div className="apply-list-head">
           <h2>已申请订单</h2>
@@ -488,7 +675,14 @@ export default function ApplyPage() {
           ) : (
             requests.map((req) => (
               <div className="apply-order-row" key={req.request_code}>
-                <span className="apply-order-ref" title={req.name}>
+                <span
+                  className="apply-order-ref"
+                  title={
+                    req.shop_order_ref
+                      ? `${req.name} · 店铺注文 ${req.shop_order_ref}`
+                      : req.name
+                  }
+                >
                   {orderNo(req)}
                 </span>
                 <span className={`pill status-${req.status}`}>

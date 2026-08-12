@@ -1,8 +1,11 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
+import AuthPanel from "./AuthPanel";
 import {
   ActionLog,
   AppMeta,
+  ApplyReport,
+  AuthUser,
   Carrier,
   ExpectedShipPeriod,
   FinanceSummary,
@@ -17,6 +20,7 @@ import {
   Stats,
   StockBox,
   TunnelStatus,
+  UserRole,
   combineStockBox,
   confirmOrderRequest,
   confirmOutboundBatch,
@@ -24,11 +28,13 @@ import {
   createOrder,
   createOrderInbound,
   createOutboundBatch,
+  createUser,
   deleteStockBox,
   detachStockBoxChild,
   downloadOutboundFeeDetail,
   addStockBoxOrders,
   fetchActionLogs,
+  fetchApplyReport,
   fetchFinanceSummary,
   fetchItems,
   fetchLatestActionLog,
@@ -42,14 +48,18 @@ import {
   fetchStats,
   fetchStockBoxes,
   fetchTunnelStatus,
+  fetchUsers,
   startTunnel,
   stopTunnel,
   getAdminToken,
+  logout,
   mergeStockBoxChild,
   rejectOrderRequest,
   removeStockBoxOrders,
   scrapeUrl,
   setAdminToken,
+  setUserActive,
+  staffConfirmDeposit,
   undoActionLog,
   updateItem,
   updateOrder,
@@ -61,13 +71,16 @@ import { batchScrapeDelayMs, waitForBatchScrape } from "./scrapeDelay";
 type Tab =
   | "orders"
   | "finance"
+  | "reports"
   | "requests"
   | "scrape"
   | "inbound"
   | "inventory"
   | "outbound"
-  | "logs";
+  | "logs"
+  | "users";
 const REQUEST_STATUS_LABEL: Record<OrderRequestStatus, string> = {
+  pending_payment: "待付定金",
   submitted: "已提交",
   ordered: "已下单",
   rejected: "已拒绝",
@@ -203,6 +216,12 @@ function groupLines(lines: Line[]) {
 export default function App() {
   const [tab, setTab] = useState<Tab>("orders");
   const [meta, setMeta] = useState<AppMeta | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [users, setUsers] = useState<AuthUser[]>([]);
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState<UserRole>("warehouse");
+  const [newUserName, setNewUserName] = useState("");
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
   const [tunnelCopied, setTunnelCopied] = useState(false);
   const [tunnelBusy, setTunnelBusy] = useState(false);
@@ -253,6 +272,12 @@ export default function App() {
   const [financeSummary, setFinanceSummary] = useState<FinanceSummary | null>(
     null,
   );
+  const [reportPeriod, setReportPeriod] = useState<"day" | "month">("month");
+  const [reportDay, setReportDay] = useState(() =>
+    new Date().toISOString().slice(0, 10),
+  );
+  const [reportMonth, setReportMonth] = useState(currentYearMonth);
+  const [applyReport, setApplyReport] = useState<ApplyReport | null>(null);
   const [scrapeBusy, setScrapeBusy] = useState(false);
   const [collection, setCollection] = useState<ScrapeProduct[]>([]);
   const [collectionPick, setCollectionPick] = useState<number[]>([]);
@@ -333,14 +358,27 @@ export default function App() {
   }, [stockBoxes]);
 
   async function loadChrome() {
-    const [nextStats, nextMeta, nextLog, kinds] = await Promise.all([
+    const nextMeta = await fetchMeta();
+    setMeta(nextMeta);
+    setAuthUser(nextMeta.user ?? null);
+    const staffOk =
+      !nextMeta.auth_required ||
+      (nextMeta.user &&
+        (nextMeta.user.role === "admin" ||
+          nextMeta.user.role === "warehouse" ||
+          nextMeta.user.role === "finance")) ||
+      !!getAdminToken();
+    if (!staffOk) {
+      setStats(null);
+      setLatestLog(null);
+      return;
+    }
+    const [nextStats, nextLog, kinds] = await Promise.all([
       fetchStats(),
-      fetchMeta(),
       fetchLatestActionLog(),
       fetchProductKinds().catch(() => ({ labels: [] as string[], aliases: {} })),
     ]);
     setStats(nextStats);
-    setMeta(nextMeta);
     setLatestLog(nextLog);
     setProductKinds(kinds.labels || []);
   }
@@ -405,6 +443,17 @@ export default function App() {
     setFinanceSummary(await fetchFinanceSummary(financeMonth));
   }
 
+  async function loadApplyReport() {
+    setApplyReport(
+      await fetchApplyReport({
+        period: reportPeriod,
+        day: reportPeriod === "day" ? reportDay : undefined,
+        month: reportPeriod === "month" ? reportMonth : undefined,
+        limit: 10,
+      }),
+    );
+  }
+
   async function refresh() {
     setLoading(true);
     setError("");
@@ -412,11 +461,15 @@ export default function App() {
       await loadChrome();
       if (tab === "orders") await loadOrders();
       if (tab === "finance") await loadFinance();
+      if (tab === "reports") await loadApplyReport();
       if (tab === "requests") await loadOrderRequests();
       if (tab === "inbound") await loadInbound();
       if (tab === "inventory") await loadInventory();
       if (tab === "outbound") await loadOutbound();
       if (tab === "logs") setLogs(await fetchActionLogs(80));
+      if (tab === "users" && authUser?.role === "admin") {
+        setUsers(await fetchUsers());
+      }
     } catch (err) {
       setError(errorText(err));
     } finally {
@@ -434,6 +487,9 @@ export default function App() {
     shipMonthFilter,
     requestStatusFilter,
     financeMonth,
+    reportPeriod,
+    reportDay,
+    reportMonth,
   ]);
 
   useEffect(() => {
@@ -613,7 +669,7 @@ export default function App() {
 
   async function onUpdateLine(
     id: number,
-    patch: { barcode?: string; status?: ItemStatus; qty?: number },
+    patch: { barcode?: string; status?: ItemStatus; qty?: number; product_kind?: string },
   ) {
     try {
       await updateItem(id, patch);
@@ -1049,6 +1105,7 @@ export default function App() {
         const skipped = selectedInventoryOrderIds.length - freeIds.length;
         setSelectedInventoryOrderIds([]);
         setAddToBoxId("");
+        setStockBoxNoteDraft("");
         setMessage(
           `已合入库存箱 #${box.box_no}：${freeIds.length} 单`
             + (skipped > 0 ? `（跳过 ${skipped} 单已合箱）` : "")
@@ -1056,9 +1113,6 @@ export default function App() {
             + (note ? " · 备注已保存" : ""),
         );
         setStockBoxes(await fetchStockBoxes());
-        if (inventoryBoxFilter === String(box.id)) {
-          setStockBoxNoteDraft(box.note || "");
-        }
         return;
       }
 
@@ -1069,14 +1123,12 @@ export default function App() {
       });
       setSelectedInventoryOrderIds([]);
       setAddToBoxId("");
+      setStockBoxNoteDraft("");
       setMessage(
         `已合箱：库存箱 #${box.box_no}（${box.order_count} 单 / ${box.item_count} 行）`
           + (note ? ` · 备注已保存` : ""),
       );
       setStockBoxes(await fetchStockBoxes());
-      if (inventoryBoxFilter === String(box.id)) {
-        setStockBoxNoteDraft(box.note || "");
-      }
     } catch (err) {
       setError(errorText(err));
     }
@@ -1789,10 +1841,54 @@ export default function App() {
         )}
       </header>
 
-      {meta?.auth_required ? (
+      {meta?.auth_required &&
+      !(
+        authUser &&
+        (authUser.role === "admin" ||
+          authUser.role === "warehouse" ||
+          authUser.role === "finance")
+      ) &&
+      !getAdminToken() ? (
+        <AuthPanel
+          title="员工登录"
+          onSuccess={(u) => {
+            setAuthUser(u);
+            setMessage(`已登录 ${u.email}`);
+            void refresh();
+          }}
+        />
+      ) : null}
+
+      {authUser &&
+      (authUser.role === "admin" ||
+        authUser.role === "warehouse" ||
+        authUser.role === "finance") ? (
+        <div className="admin-token-bar panel">
+          <span className="muted">
+            {authUser.display_name || authUser.email} · {authUser.role}
+          </span>
+          <a href="/me" className="muted">
+            客户门户
+          </a>
+          <button
+            type="button"
+            className="btn"
+            onClick={() => {
+              void logout().then(() => {
+                setAuthUser(null);
+                setAdminToken("");
+                setMessage("已退出");
+                void refresh();
+              });
+            }}
+          >
+            退出
+          </button>
+        </div>
+      ) : meta?.auth_required ? (
         <div className="admin-token-bar panel">
           <label>
-            管理口令
+            管理口令（兼容）
             <input
               type="password"
               value={adminTokenInput}
@@ -1820,14 +1916,31 @@ export default function App() {
           [
             ["orders", "订单"],
             ["finance", "财务"],
+            ["reports", "统计"],
             ["requests", "申请单"],
             ["scrape", "抓取导入"],
             ["inbound", "进库"],
             ["inventory", "库存"],
             ["outbound", "出库"],
             ["logs", "操作日志"],
+            ["users", "用户"],
           ] as [Tab, string][]
-        ).map(([key, label]) => (
+        )
+          .filter(([key]) => {
+            const role = authUser?.role;
+            if (key === "users") return role === "admin";
+            if (key === "finance" || key === "reports") {
+              return !role || role === "admin" || role === "finance" || role === "warehouse";
+            }
+            if (
+              role === "finance" &&
+              (key === "scrape" || key === "inbound" || key === "inventory" || key === "outbound")
+            ) {
+              return false;
+            }
+            return true;
+          })
+          .map(([key, label]) => (
           <button
             type="button"
             key={key}
@@ -2223,6 +2336,131 @@ export default function App() {
         </section>
       )}
 
+      {tab === "reports" && (
+        <section className="panel">
+          <p className="muted">
+            按申请创建时间统计：日/月单量、热门链接、花费用户、商品 IP。全站流水 SG-0001…；用户端仅显示账户流水 SGuid-0001…。
+          </p>
+          <div className="toolbar">
+            <label>
+              周期
+              <select
+                value={reportPeriod}
+                onChange={(e) =>
+                  setReportPeriod(e.target.value as "day" | "month")
+                }
+              >
+                <option value="day">按日</option>
+                <option value="month">按月</option>
+              </select>
+            </label>
+            {reportPeriod === "day" ? (
+              <label>
+                日期
+                <input
+                  type="date"
+                  value={reportDay}
+                  onChange={(e) => setReportDay(e.target.value)}
+                />
+              </label>
+            ) : (
+              <label>
+                月份
+                <input
+                  type="month"
+                  value={reportMonth}
+                  onChange={(e) => setReportMonth(e.target.value)}
+                />
+              </label>
+            )}
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void loadApplyReport()}
+            >
+              刷新
+            </button>
+          </div>
+          {!applyReport ? (
+            <div className="empty">加载中…</div>
+          ) : (
+            <>
+              <div className="finance-grid">
+                <article>
+                  <h3>
+                    {applyReport.period === "day" ? "日" : "月"}报（
+                    {applyReport.label}）
+                  </h3>
+                  <p>
+                    申请单数 <strong>{applyReport.order_count}</strong>
+                  </p>
+                  <ul>
+                    <li>商品合计 JPY：{moneyText(applyReport.goods_jpy, "0")}</li>
+                    <li>定金合计 JPY：{moneyText(applyReport.deposit_jpy, "0")}</li>
+                    {Object.entries(applyReport.by_status).map(([k, v]) => (
+                      <li key={k}>
+                        {REQUEST_STATUS_LABEL[k as OrderRequestStatus] || k}：{v}
+                      </li>
+                    ))}
+                  </ul>
+                </article>
+              </div>
+              <div className="finance-grid" style={{ marginTop: "1rem" }}>
+                <article>
+                  <h3>下单最多链接</h3>
+                  {applyReport.top_links.length === 0 ? (
+                    <div className="empty">暂无</div>
+                  ) : (
+                    <ul>
+                      {applyReport.top_links.map((row) => (
+                        <li key={row.source_url}>
+                          <strong>{row.count}</strong> 次 ·{" "}
+                          {moneyText(row.goods_jpy, "0")} ·{" "}
+                          <a href={row.source_url} target="_blank" rel="noreferrer">
+                            {(row.name || row.source_url).slice(0, 48)}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+                <article>
+                  <h3>花费最多用户</h3>
+                  {applyReport.top_users.length === 0 ? (
+                    <div className="empty">暂无</div>
+                  ) : (
+                    <ul>
+                      {applyReport.top_users.map((row) => (
+                        <li key={String(row.user_id ?? row.email)}>
+                          <strong>{moneyText(row.goods_jpy, "0")}</strong> ·{" "}
+                          {row.display_name || row.email || `用户#${row.user_id}`} ·{" "}
+                          {row.count} 单
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+                <article>
+                  <h3>商品 IP</h3>
+                  {applyReport.top_ips.length === 0 ? (
+                    <div className="empty">暂无</div>
+                  ) : (
+                    <ul>
+                      {applyReport.top_ips.map((row) => (
+                        <li key={row.ip}>
+                          <strong>{row.ip}</strong> · {row.count} 单 ·{" "}
+                          {moneyText(row.goods_jpy, "0")}
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </article>
+              </div>
+            </>
+          )}
+        </section>
+      )}
+
       {tab === "requests" && (
         <section className="panel">
           <p className="muted">
@@ -2236,6 +2474,7 @@ export default function App() {
                 onChange={(e) => setRequestStatusFilter(e.target.value)}
               >
                 <option value="">全部</option>
+                <option value="pending_payment">待付定金</option>
                 <option value="submitted">已提交</option>
                 <option value="ordered">已下单</option>
                 <option value="rejected">已拒绝</option>
@@ -2273,7 +2512,11 @@ export default function App() {
                         <div>
                           <strong>{req.name}</strong>
                           <p className="muted">
-                            {req.request_code} · ×{req.qty}
+                            账户 {req.account_order_no || req.request_code}
+                            <span className="muted">
+                              {" "}
+                              · 全站 {req.request_code} · ×{req.qty}
+                            </span>
                             {req.shop ? ` · ${req.shop}` : ""}
                             {req.unit_cost != null ? ` · ¥${req.unit_cost}` : ""}
                           </p>
@@ -2302,6 +2545,28 @@ export default function App() {
                         <span className="error">拒绝：{req.reject_reason}</span>
                       ) : null}
                     </div>
+                    {req.status === "pending_payment" ? (
+                      <div className="request-actions">
+                        <span className="muted">
+                          定金 {req.deposit_amount != null ? `¥${req.deposit_amount}` : "—"}
+                          （{(req.deposit_rate ?? 0.3) * 100}%）
+                        </span>
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          onClick={() => {
+                            void staffConfirmDeposit(req.id)
+                              .then(() => {
+                                setMessage(`已确认定金 ${req.request_code}`);
+                                return loadOrderRequests();
+                              })
+                              .catch((err) => setError(errorText(err)));
+                          }}
+                        >
+                          确认定金已付
+                        </button>
+                      </div>
+                    ) : null}
                     {req.status === "submitted" ? (
                       <div className="request-actions">
                         <label>
@@ -3550,9 +3815,120 @@ export default function App() {
           <p className="muted">仅可撤回最近一步且尚未被后续状态变更影响的操作。</p>
           {logs.length === 0 ? <div className="empty">暂无操作日志</div> : (
             <div className="table-wrap"><table><thead><tr><th>时间</th><th>操作</th><th>状态</th><th /></tr></thead><tbody>
-              {logs.map((log) => <tr key={log.id}><td className="muted">{formatDate(log.created_at)}</td><td>{log.summary}</td><td>{log.undone_at ? <span className="badge cancelled">已撤回</span> : log.undoable && latestLog?.id === log.id ? <span className="badge in_stock">可撤回</span> : "—"}</td><td>{log.undoable && latestLog?.id === log.id && <button type="button" className="btn" disabled={undoBusy} onClick={() => void onUndo(log.id)}>撤回</button>}</td></tr>)}
+              {logs.map((log) => <tr key={log.id}><td className="muted">{formatDate(log.created_at)}</td><td>{log.summary}{log.actor_user_id != null ? ` · #${log.actor_user_id}` : ""}</td><td>{log.undone_at ? <span className="badge cancelled">已撤回</span> : log.undoable && latestLog?.id === log.id ? <span className="badge in_stock">可撤回</span> : "—"}</td><td>{log.undoable && latestLog?.id === log.id && <button type="button" className="btn" disabled={undoBusy} onClick={() => void onUndo(log.id)}>撤回</button>}</td></tr>)}
             </tbody></table></div>
           )}
+        </section>
+      )}
+
+      {tab === "users" && authUser?.role === "admin" && (
+        <section className="panel">
+          <h3>用户管理</h3>
+          <form
+            className="auth-form"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void (async () => {
+                try {
+                  await createUser({
+                    email: newUserEmail.trim(),
+                    password: newUserPassword,
+                    role: newUserRole,
+                    display_name: newUserName.trim(),
+                  });
+                  setNewUserEmail("");
+                  setNewUserPassword("");
+                  setNewUserName("");
+                  setUsers(await fetchUsers());
+                  setMessage("用户已创建");
+                } catch (err) {
+                  setError(errorText(err));
+                }
+              })();
+            }}
+          >
+            <label>
+              邮箱
+              <input
+                type="email"
+                value={newUserEmail}
+                onChange={(e) => setNewUserEmail(e.target.value)}
+                required
+              />
+            </label>
+            <label>
+              密码
+              <input
+                type="password"
+                value={newUserPassword}
+                onChange={(e) => setNewUserPassword(e.target.value)}
+                required
+                minLength={8}
+              />
+            </label>
+            <label>
+              昵称
+              <input
+                value={newUserName}
+                onChange={(e) => setNewUserName(e.target.value)}
+              />
+            </label>
+            <label>
+              角色
+              <select
+                value={newUserRole}
+                onChange={(e) => setNewUserRole(e.target.value as UserRole)}
+              >
+                <option value="admin">admin</option>
+                <option value="warehouse">warehouse</option>
+                <option value="finance">finance</option>
+                <option value="customer">customer</option>
+              </select>
+            </label>
+            <button type="submit" className="btn primary">
+              创建用户
+            </button>
+          </form>
+          <div className="table-wrap" style={{ marginTop: "1rem" }}>
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>邮箱</th>
+                  <th>角色</th>
+                  <th>状态</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td>{u.id}</td>
+                    <td>
+                      {u.display_name || "—"}
+                      <div className="muted">{u.email}</div>
+                    </td>
+                    <td>{u.role}</td>
+                    <td>{u.is_active ? "启用" : "停用"}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="btn"
+                        onClick={() => {
+                          void setUserActive(u.id, !u.is_active)
+                            .then(() => fetchUsers())
+                            .then(setUsers)
+                            .catch((err) => setError(errorText(err)));
+                        }}
+                      >
+                        {u.is_active ? "停用" : "启用"}
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </section>
       )}
     </div>

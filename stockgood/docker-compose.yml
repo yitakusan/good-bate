@@ -1,0 +1,58 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      STOCKGOOD_DB_MODE: production
+      STOCKGOOD_STATIC_DIR: /app/frontend/dist
+      STOCKGOOD_COOKIE_SECURE: "true"
+      STOCKGOOD_AUTH_REQUIRED: "true"
+    volumes:
+      - stockgood-data:/app/backend/data
+    expose:
+      - "8002"
+    networks:
+      - stockgood
+
+  nginx:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/certs:/etc/nginx/certs:ro
+    networks:
+      - stockgood
+
+  backup:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      - app
+    env_file:
+      - .env.production
+    environment:
+      STOCKGOOD_DB_MODE: production
+    volumes:
+      - stockgood-data:/app/backend/data
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        while true; do
+          /app/scripts/backup-db.sh daily || true
+          sleep 86400
+        done
+    networks:
+      - stockgood
+
+volumes:
+  stockgood-data:
+
+networks:
+  stockgood:

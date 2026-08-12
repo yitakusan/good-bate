@@ -286,7 +286,26 @@ def init_db() -> None:
                 summary TEXT NOT NULL,
                 payload_json TEXT NOT NULL,
                 created_at TEXT NOT NULL,
-                undone_at TEXT
+                undone_at TEXT,
+                actor_user_id INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'customer',
+                display_name TEXT NOT NULL DEFAULT '',
+                is_active INTEGER NOT NULL DEFAULT 1,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS sessions (
+                token_hash TEXT PRIMARY KEY,
+                user_id INTEGER NOT NULL,
+                created_at TEXT NOT NULL,
+                expires_at TEXT NOT NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
             CREATE TABLE IF NOT EXISTS order_requests (
@@ -308,9 +327,11 @@ def init_db() -> None:
                 staff_note TEXT NOT NULL DEFAULT '',
                 reject_reason TEXT NOT NULL DEFAULT '',
                 stock_order_id INTEGER,
+                user_id INTEGER,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
-                FOREIGN KEY (stock_order_id) REFERENCES orders(id) ON DELETE SET NULL
+                FOREIGN KEY (stock_order_id) REFERENCES orders(id) ON DELETE SET NULL,
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
             );
 
             CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
@@ -323,7 +344,31 @@ def init_db() -> None:
             CREATE INDEX IF NOT EXISTS idx_order_requests_status ON order_requests(status);
             CREATE INDEX IF NOT EXISTS idx_order_requests_code ON order_requests(request_code);
             CREATE INDEX IF NOT EXISTS idx_stock_box_orders_box ON stock_box_orders(box_id);
+            CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
             """
+        )
+        _ensure_column(conn, "action_logs", "actor_user_id", "INTEGER")
+        _ensure_column(conn, "order_requests", "user_id", "INTEGER")
+        _ensure_column(conn, "order_requests", "account_order_no", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "order_requests", "deposit_rate", "REAL")
+        _ensure_column(conn, "order_requests", "deposit_amount", "REAL")
+        _ensure_column(conn, "order_requests", "deposit_paid_at", "TEXT")
+        _ensure_column(conn, "order_requests", "payment_ref", "TEXT NOT NULL DEFAULT ''")
+        # Backfill account_order_no from legacy per-account request_code when empty
+        conn.execute(
+            """
+            UPDATE order_requests
+            SET account_order_no = request_code
+            WHERE IFNULL(TRIM(account_order_no), '') = ''
+              AND request_code GLOB 'SG[0-9]*[0-9]-*'
+            """
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_order_requests_user ON order_requests(user_id)"
+        )
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_order_requests_account_no ON order_requests(account_order_no)"
         )
         _ensure_column(conn, "items", "source_url", "TEXT NOT NULL DEFAULT ''")
         _ensure_column(conn, "items", "image_url", "TEXT NOT NULL DEFAULT ''")

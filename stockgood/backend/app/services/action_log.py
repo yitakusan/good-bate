@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 
+from app.auth_context import get_actor_user_id
 from app.database import get_conn
 from app.services.order_status import sync_order_status, sync_orders_for_items
 
@@ -19,13 +20,15 @@ def record(
     action_type: str,
     summary: str,
     payload: dict[str, Any],
+    actor_user_id: Optional[int] = None,
 ) -> dict[str, Any]:
+    actor = actor_user_id if actor_user_id is not None else get_actor_user_id()
     cur = conn.execute(
         """
-        INSERT INTO action_logs (action_type, summary, payload_json, created_at)
-        VALUES (?, ?, ?, ?)
+        INSERT INTO action_logs (action_type, summary, payload_json, created_at, actor_user_id)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (action_type, summary, json.dumps(payload, ensure_ascii=False), _now()),
+        (action_type, summary, json.dumps(payload, ensure_ascii=False), _now(), actor),
     )
     row = conn.execute(
         "SELECT * FROM action_logs WHERE id = ?", (cur.lastrowid,)
@@ -120,6 +123,7 @@ def undo(log_id: int) -> dict[str, Any]:
 
 
 def _row_out(row) -> dict[str, Any]:
+    keys = row.keys()
     return {
         "id": row["id"],
         "action_type": row["action_type"],
@@ -127,6 +131,7 @@ def _row_out(row) -> dict[str, Any]:
         "created_at": row["created_at"],
         "undone_at": row["undone_at"],
         "undoable": row["undone_at"] is None,
+        "actor_user_id": row["actor_user_id"] if "actor_user_id" in keys else None,
     }
 
 

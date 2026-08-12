@@ -420,11 +420,54 @@ class ActionLogOut(BaseModel):
     created_at: str
     undone_at: Optional[str] = None
     undoable: bool = False
+    actor_user_id: Optional[int] = None
+
+
+# --- Auth ---
+
+UserRole = Literal["admin", "warehouse", "finance", "customer"]
+
+
+class UserOut(BaseModel):
+    id: int
+    email: str
+    display_name: str = ""
+    role: UserRole
+    is_active: bool = True
+    created_at: str = ""
+
+
+class LoginIn(BaseModel):
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=1)
+
+
+class RegisterCustomerIn(BaseModel):
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=8)
+    display_name: str = ""
+
+
+class CreateUserIn(BaseModel):
+    email: str = Field(min_length=3)
+    password: str = Field(min_length=8)
+    role: UserRole = "warehouse"
+    display_name: str = ""
+
+
+class ChangePasswordIn(BaseModel):
+    password: str = Field(min_length=8)
+
+
+class SetActiveIn(BaseModel):
+    is_active: bool
 
 
 # --- Customer order requests (C-end apply) ---
 
-OrderRequestStatus = Literal["submitted", "ordered", "rejected"]
+OrderRequestStatus = Literal["pending_payment", "submitted", "ordered", "rejected"]
+
+DEPOSIT_RATE_DEFAULT = 0.3
 
 
 class OrderRequestCreate(BaseModel):
@@ -452,9 +495,16 @@ class OrderRequestReject(BaseModel):
     reject_reason: str = Field(min_length=1)
 
 
+class DepositConfirmIn(BaseModel):
+    """Mark 30% deposit paid (stub until finance system webhook)."""
+
+    payment_ref: str = ""
+
+
 class OrderRequestOut(BaseModel):
     id: int
     request_code: str
+    account_order_no: str = ""
     status: OrderRequestStatus
     name: str
     shop: str
@@ -471,6 +521,11 @@ class OrderRequestOut(BaseModel):
     staff_note: str = ""
     reject_reason: str = ""
     stock_order_id: Optional[int] = None
+    user_id: Optional[int] = None
+    deposit_rate: Optional[float] = None
+    deposit_amount: Optional[float] = None
+    deposit_paid_at: Optional[str] = None
+    payment_ref: str = ""
     created_at: str
     updated_at: str
 
@@ -479,6 +534,7 @@ class OrderRequestPublicOut(BaseModel):
     """Customer-facing subset."""
 
     request_code: str
+    account_order_no: str = ""
     status: OrderRequestStatus
     name: str
     shop: str
@@ -494,3 +550,7 @@ class OrderRequestPublicOut(BaseModel):
     created_at: str
     updated_at: str
     status_label: str = ""
+    deposit_rate: Optional[float] = None
+    deposit_amount: Optional[float] = None
+    deposit_paid_at: Optional[str] = None
+    payment_ref: str = ""

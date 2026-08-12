@@ -293,12 +293,31 @@ export interface AppMeta {
   database: string;
   label: string;
   auth_required?: boolean;
+  version?: string;
+  user?: AuthUser | null;
+  deposit_rate?: number;
 }
 
-export type OrderRequestStatus = "submitted" | "ordered" | "rejected";
+export type UserRole = "admin" | "warehouse" | "finance" | "customer";
+
+export interface AuthUser {
+  id: number;
+  email: string;
+  display_name: string;
+  role: UserRole;
+  is_active: boolean;
+  created_at: string;
+}
+
+export type OrderRequestStatus =
+  | "pending_payment"
+  | "submitted"
+  | "ordered"
+  | "rejected";
 
 export interface OrderRequestPublic {
   request_code: string;
+  account_order_no?: string;
   status: OrderRequestStatus;
   status_label: string;
   name: string;
@@ -314,11 +333,16 @@ export interface OrderRequestPublic {
   reject_reason: string;
   created_at: string;
   updated_at: string;
+  deposit_rate?: number | null;
+  deposit_amount?: number | null;
+  deposit_paid_at?: string | null;
+  payment_ref?: string;
 }
 
 export interface OrderRequest {
   id: number;
   request_code: string;
+  account_order_no?: string;
   status: OrderRequestStatus;
   name: string;
   shop: string;
@@ -335,6 +359,11 @@ export interface OrderRequest {
   staff_note: string;
   reject_reason: string;
   stock_order_id: number | null;
+  user_id?: number | null;
+  deposit_rate?: number | null;
+  deposit_amount?: number | null;
+  deposit_paid_at?: string | null;
+  payment_ref?: string;
   created_at: string;
   updated_at: string;
 }
@@ -384,6 +413,7 @@ export interface ActionLog {
   created_at: string;
   undone_at: string | null;
   undoable: boolean;
+  actor_user_id?: number | null;
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -396,6 +426,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
     headers,
+    credentials: "include",
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -407,7 +438,10 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(detail);
   }
-  return res.json() as Promise<T>;
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  if (!text) return undefined as T;
+  return JSON.parse(text) as T;
 }
 
 export function fetchTunnelStatus() {
@@ -430,6 +464,82 @@ export function stopTunnel() {
 
 export function fetchMeta() {
   return request<AppMeta>("/api/meta");
+}
+
+export function login(email: string, password: string) {
+  return request<AuthUser>("/api/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ email, password }),
+  });
+}
+
+export function logout() {
+  return request<{ ok: boolean }>("/api/auth/logout", { method: "POST" });
+}
+
+export function registerCustomer(
+  email: string,
+  password: string,
+  display_name = "",
+) {
+  return request<AuthUser>("/api/auth/register", {
+    method: "POST",
+    body: JSON.stringify({ email, password, display_name }),
+  });
+}
+
+export function fetchMe() {
+  return request<AuthUser | null>("/api/auth/me");
+}
+
+export function fetchMyOrderRequests(status?: string) {
+  const qs = new URLSearchParams();
+  if (status) qs.set("status", status);
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request<OrderRequestPublic[]>(`/api/me/order-requests${suffix}`);
+}
+
+export function confirmDeposit(code: string, payment_ref = "") {
+  return request<OrderRequestPublic>(
+    `/api/me/order-requests/${encodeURIComponent(code)}/confirm-deposit`,
+    {
+      method: "POST",
+      body: JSON.stringify({ payment_ref }),
+    },
+  );
+}
+
+export function staffConfirmDeposit(requestId: number, payment_ref = "") {
+  return request<OrderRequest>(
+    `/api/order-requests/${requestId}/confirm-deposit`,
+    {
+      method: "POST",
+      body: JSON.stringify({ payment_ref }),
+    },
+  );
+}
+
+export function fetchUsers() {
+  return request<AuthUser[]>("/api/users");
+}
+
+export function createUser(payload: {
+  email: string;
+  password: string;
+  role: UserRole;
+  display_name?: string;
+}) {
+  return request<AuthUser>("/api/users", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setUserActive(userId: number, is_active: boolean) {
+  return request<AuthUser>(`/api/users/${userId}/active`, {
+    method: "PATCH",
+    body: JSON.stringify({ is_active }),
+  });
 }
 
 export function fetchProductKinds() {
@@ -726,23 +836,24 @@ export function downloadOutboundFeeDetail(id: number) {
   const headers: Record<string, string> = {};
   const adminToken = getAdminToken();
   if (adminToken) headers["X-Admin-Token"] = adminToken;
-  return fetch(`/api/outbound-batches/${id}/fee-detail.xlsx`, { headers }).then(
-    async (res) => {
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || res.statusText);
-      }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `fee-detail-batch-${id}.xlsx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    },
-  );
+  return fetch(`/api/outbound-batches/${id}/fee-detail.xlsx`, {
+    headers,
+    credentials: "include",
+  }).then(async (res) => {
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `fee-detail-batch-${id}.xlsx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
 }
 
 export function fetchFinanceSummary(month?: string) {
@@ -750,16 +861,52 @@ export function fetchFinanceSummary(month?: string) {
   return request<FinanceSummary>(`/api/finance/summary${q}`);
 }
 
+export interface ApplyReport {
+  period: "day" | "month";
+  label: string;
+  start: string;
+  end: string;
+  order_count: number;
+  by_status: Record<string, number>;
+  goods_jpy: number;
+  deposit_jpy: number;
+  top_links: {
+    source_url: string;
+    name: string;
+    count: number;
+    goods_jpy: number;
+  }[];
+  top_users: {
+    user_id: number | null;
+    email: string;
+    display_name: string;
+    count: number;
+    goods_jpy: number;
+  }[];
+  top_ips: { ip: string; count: number; goods_jpy: number }[];
+}
+
+export function fetchApplyReport(params: {
+  period?: "day" | "month";
+  day?: string;
+  month?: string;
+  limit?: number;
+} = {}) {
+  const qs = new URLSearchParams();
+  if (params.period) qs.set("period", params.period);
+  if (params.day) qs.set("day", params.day);
+  if (params.month) qs.set("month", params.month);
+  if (params.limit) qs.set("limit", String(params.limit));
+  const suffix = qs.toString() ? `?${qs}` : "";
+  return request<ApplyReport>(`/api/reports/apply${suffix}`);
+}
+
 export function fetchActionLogs(limit = 50) {
   return request<ActionLog[]>(`/api/action-logs?limit=${limit}`);
 }
 
 export async function fetchLatestActionLog() {
-  const res = await fetch("/api/action-logs/latest");
-  if (!res.ok) {
-    throw new Error(res.statusText);
-  }
-  return (await res.json()) as ActionLog | null;
+  return request<ActionLog | null>("/api/action-logs/latest");
 }
 
 export function undoActionLog(id: number) {

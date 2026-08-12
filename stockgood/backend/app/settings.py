@@ -19,8 +19,28 @@ class Settings(BaseSettings):
     product_kind_path: Path = DATA_DIR / "product_kinds.json"
     # production = 实际库存；shadow = 测试影子库（采购导入等，不参与实库存）
     db_mode: DbMode = "production"
-    # Optional staff write protection for order-request APIs (and UI prompt).
+    # Optional legacy staff shared secret (compat). Prefer user sessions.
     admin_token: Optional[str] = None
+    # None = auto (require when users exist or admin_token set)
+    auth_required: Optional[bool] = None
+    session_secret: Optional[str] = None
+    cookie_secure: bool = False
+    cors_origins: str = "*"
+    # First-boot admin (only if users table empty)
+    bootstrap_admin_email: Optional[str] = None
+    bootstrap_admin_password: Optional[str] = None
+    # Serve built SPA from this directory when set (Docker / production)
+    static_dir: Optional[Path] = None
+    # SMTP notifications (optional)
+    smtp_host: Optional[str] = None
+    smtp_port: int = 587
+    smtp_user: Optional[str] = None
+    smtp_password: Optional[str] = None
+    smtp_from: Optional[str] = None
+    smtp_use_tls: bool = True
+    notify_enabled: bool = True
+    # Deposit rate for customer apply (0.3 = 30%); finance gateway later
+    deposit_rate: float = 0.3
 
     @field_validator("db_mode", mode="before")
     @classmethod
@@ -43,6 +63,37 @@ class Settings(BaseSettings):
             return None
         return value
 
+    @field_validator("auth_required", mode="before")
+    @classmethod
+    def empty_auth_required_as_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in ("", "auto", "none"):
+                return None
+            if text in ("1", "true", "yes", "on"):
+                return True
+            if text in ("0", "false", "no", "off"):
+                return False
+        return value
+
+    @field_validator(
+        "session_secret",
+        "bootstrap_admin_email",
+        "bootstrap_admin_password",
+        "smtp_host",
+        "smtp_user",
+        "smtp_password",
+        "smtp_from",
+        mode="before",
+    )
+    @classmethod
+    def empty_str_as_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @property
     def database_path(self) -> Path:
         if self.db_mode == "shadow":
@@ -52,6 +103,13 @@ class Settings(BaseSettings):
     @property
     def is_shadow(self) -> bool:
         return self.db_mode == "shadow"
+
+    @property
+    def cors_origin_list(self) -> list[str]:
+        raw = (self.cors_origins or "*").strip()
+        if raw == "*":
+            return ["*"]
+        return [p.strip() for p in raw.split(",") if p.strip()]
 
     model_config = SettingsConfigDict(
         env_file=".env",

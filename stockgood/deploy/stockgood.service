@@ -1,0 +1,18 @@
+[Unit]
+Description=Stockgood API
+After=network.target
+
+[Service]
+Type=simple
+User=stockgood
+WorkingDirectory=/opt/stockgood/backend
+Environment=STOCKGOOD_DB_MODE=production
+Environment=STOCKGOOD_AUTH_REQUIRED=true
+Environment=STOCKGOOD_STATIC_DIR=/opt/stockgood/frontend/dist
+EnvironmentFile=-/opt/stockgood/backend/.env
+ExecStart=/opt/stockgood/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8002 --workers 1
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
