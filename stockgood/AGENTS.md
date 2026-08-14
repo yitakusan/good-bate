@@ -66,7 +66,7 @@ SQLite：生产 `backend/data/stockgood.sqlite`，影子库 `backend/data/stockg
 
 1. 检查相关调用方。
 2. 确认 API 兼容。
-3. 确认数据库操作范围（测试写操作只用影子库）。
+3. 确认数据库操作范围（unittest 用临时 sqlite；冒烟写操作只用影子库）。
 4. 运行相关测试 / 冒烟。
 5. 查看 Git diff，确认没有改无关代码。
 6. 可交付改动同步 `CHANGELOG.md` 与版本号（`VERSION`、`backend/app/main.py`、`frontend/package.json`）。
@@ -100,6 +100,7 @@ SQLite：生产 `backend/data/stockgood.sqlite`，影子库 `backend/data/stockg
 - 不删除文件或现有代码。
 - 不清空数据库；不删除表/字段；不执行 destructive migration。
 - 不在生产库写入测试数据（`STOCKGOOD_DB_MODE=production` / `stockgood.sqlite`）。
+- unittest 必须走 `STOCKGOOD_DATABASE_PATH` 临时文件，不要写共享影子库 `stockgood.shadow.sqlite`。
 - 会改变实际库存的操作：先影子库验收，用户确认后再动实库。
 - 不强制覆盖用户现有代码。
 - 不执行 `git reset --hard` 或会丢失未提交代码的 Git 操作。

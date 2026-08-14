@@ -30,7 +30,7 @@ from app.auth import (
     user_count,
     verify_password,
 )
-from app.database import DATA_DIR, init_db
+from app.database import DATA_DIR, get_db_path, init_db
 from app.models import (
     ActionLogOut,
     ChangePasswordIn,
@@ -86,7 +86,7 @@ from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
-APP_VERSION = "0.9.14"
+APP_VERSION = "0.9.16"
 
 # ============================================================
 # SHARED MODULE
@@ -163,7 +163,7 @@ app.mount(
 def health() -> dict[str, object]:
     """返回服务状态、库模式、磁盘与最近备份信息。"""
     settings = get_settings()
-    db_path = settings.database_path
+    db_path = get_db_path()
     backup_dir = DATA_DIR / "backups"
     last_backup = None
     if backup_dir.is_dir():
@@ -200,7 +200,7 @@ def meta(
     return {
         "db_mode": settings.db_mode,
         "is_shadow": settings.is_shadow,
-        "database": settings.database_path.name,
+        "database": get_db_path().name,
         "label": (
             "测试影子库 · 不参与实际库存"
             if settings.is_shadow

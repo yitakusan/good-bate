@@ -103,7 +103,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 测试
 
-- 未确认独立 AUTH 单测；本地冒烟依赖影子库账号
+- `backend/tests/test_auth_roles.py`（顾客 403 员工接口；仓库不能费用明细/改财务；财务可打费用明细接口；Cookie 与 `X-Admin-Token` 双路径）
 
 ### 调用链
 
@@ -246,6 +246,10 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - `orders`
 - `items`（含迁移列：`barcode`、`ip`、`product_kind`、`image_url`、`source_url`、`expected_ship_*` 等）
 
+### 测试
+
+- `backend/tests/test_order_flow.py`（下单 → 进库 → 在库 → 合箱不改状态 → 出库锁定货款 → 撤回；进库确认撤回；编辑批次后货款重算）
+
 ### 调用链
 
 订单 Tab → `fetchOrders()` → `GET /api/orders` → `orders_svc.list_orders` → `orders` + `items`
@@ -373,6 +377,10 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - `shipment_items`
 - `items.status`
 
+### 测试
+
+- `backend/tests/test_order_flow.py`（`create_inbound_for_order` → `confirm_shipment`；确认后可撤回回 `inbound_shipped`）
+
 ### 依赖关系
 
 前置 `ORDER`；确认后可供 `INVENTORY` / `OUTBOUND_BATCH`。
@@ -417,6 +425,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 ### 测试
 
 - `backend/_smoke_add_to_box.py`
+- `backend/tests/test_order_flow.py`（已在其他箱则 `add_orders` 拒绝）
 
 ### 依赖关系
 
@@ -471,6 +480,10 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - `shipment_items`
 - `items`（状态改为 `outbound_shipped` / `delivered`）
 
+### 测试
+
+- `backend/tests/test_order_flow.py`（创建批次锁定 `goods_receivable_cny`，撤回批次；编辑批次改数量后重算货款）
+
 ### 调用链
 
 出库 Tab → `createOutboundBatch()` → `POST /api/outbound-batches` → `create_batch()` → `outbound_batches` + `shipments` + `shipment_items` + 更新 `items`
@@ -523,6 +536,10 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 `OUTBOUND_BATCH`。种类英文映射在 `inv_template.KIND_EN`。
 
+### 测试
+
+- `backend/tests/test_exports.py`（双 Sheet 名、PACKING F5 而非 F6、预览 `FIT0`、模板文件不被写回）
+
 ---
 
 ## FEATURE: FEE_DETAIL
@@ -552,6 +569,11 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 ### 数据库
 
 只读批次/箱/货品/订单汇率。不写库。
+
+### 测试
+
+- `backend/tests/test_auth_roles.py`（仓库 403，财务可访问接口；遗留 token 可进、已登录仓库带 token 仍 403）
+- `backend/tests/test_exports.py`（双 Sheet、表头、订单号/件数、模板不被写回）
 
 ### 依赖关系
 
@@ -597,6 +619,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 ### 测试
 
 - `backend/_smoke_finance.py`
+- `backend/tests/test_order_flow.py`（出库锁定货款 225 CNY；改数量后重算 175 CNY）
 
 ### 依赖关系
 
@@ -667,6 +690,10 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 - `action_logs`
 
+### 测试
+
+- `backend/tests/test_order_flow.py`（撤回最近 `create_outbound_batch`；撤回进库 `confirm_shipment`）
+
 ### 依赖关系
 
 被订单/进库/出库/合箱等写路径调用。
@@ -730,12 +757,14 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 - `backend/app/main.py`
 - `backend/app/settings.py`
+- `backend/app/schema_migrations.py`（幂等列迁移记录）
 - `backend/app/product_kind.py`
 - `backend/data/product_kinds.json`
 
 ### 测试
 
 - `backend/_smoke_product_kind.py`
+- `backend/tests/test_migrations.py`（`schema_migrations`、tracking UNIQUE 拆除）
 
 ---
 
@@ -743,9 +772,11 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 | 模块 | 用途 | 使用 FEATURE |
 |---|---|---|
-| `backend/app/database.py` | SQLite 连接、`init_db`、列迁移 | 全部写路径 |
+| `backend/app/database.py` | SQLite 连接、`init_db` 建表 | 全部写路径 |
+| `backend/app/schema_migrations.py` | 具名幂等迁移 + `schema_migrations` 表 | 全部写路径（启动） |
 | `backend/app/models.py` | Pydantic 请求/响应 | 全部 API |
-| `frontend/src/api.ts` | 浏览器 `fetch` 封装 | 全部前端 |
+| `frontend/src/api-types.generated.ts` | OpenAPI 生成的 TS 类型 | `api.ts` |
+| `frontend/src/api.ts` | 浏览器 `fetch` 封装（类型引用生成文件） | 全部前端 |
 | `backend/app/settings.py` | 环境变量、库模式、CORS | SYSTEM / AUTH |
 | `backend/app/services/order_status.py` | 订单状态由明细汇总 | ORDER / INBOUND / OUTBOUND |
 | `backend/app/tracking_links.py` | 承运商查询 URL | INBOUND / OUTBOUND |
@@ -770,8 +801,9 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 | `sessions` | AUTH | 同上 | Cookie 会话 |
 | `order_requests` | ORDER_REQUEST, APPLY_STATS, CUSTOMER_PORTAL | 同上 + 定金列迁移 | 顾客申请 |
 | `action_logs` | ACTION_LOG | 同上 | 可撤销日志 |
+| `schema_migrations` | SYSTEM | `init_db` + `schema_migrations.py` | 已应用的幂等迁移名 |
 
-`outbound_batches.invoice_ship_date`、`shipments.net_weight` 等在 `CREATE TABLE` 原文中可能没有，由 `_ensure_column` 补齐。
+`outbound_batches.invoice_ship_date`、`shipments.net_weight` 等在 `CREATE TABLE` 原文中可能没有，由迁移 `0001_ensure_legacy_columns` 补齐。
 
 ---
 
@@ -779,11 +811,14 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 | 路径 | 说明 |
 |---|---|
+| `backend/tests/` | 关键路径 unittest（临时 sqlite：`STOCKGOOD_DATABASE_PATH`） |
+| `backend/tests/test_exports.py` | INV / 费用明细模板契约 |
 | `backend/test_retailer_scrapers.py` | ORDER_IMPORT |
 | `backend/test_zozo_order.py` | ORDER_IMPORT |
 | `backend/_smoke_finance.py` | FINANCE 影子库冒烟 |
 | `backend/_smoke_product_kind.py` | SYSTEM / 种类 |
 | `backend/_smoke_add_to_box.py` | INVENTORY |
+| `scripts/gen-api-types.py` | OpenAPI → `frontend/src/api-types.generated.ts` |
 | `start.bat` / `start-shadow.bat` / `stop.bat` | 启停 |
 | `scripts/start-bg.ps1` | 后台起前后端 |
 | `scripts/backup-db.ps1` | SQLite 备份 |

@@ -2,305 +2,69 @@
 // SHARED MODULE
 //
 // [用途] 浏览器 fetch 封装；几乎所有页面经此调用后端
+// [类型] 请求/响应模型来自 api-types.generated.ts（python scripts/gen-api-types.py）
 // [文件] frontend/src/api.ts
 // [后端] backend/app/main.py
 // [代码索引] docs/CODE_INDEX.md#shared-modules
 // ============================================================
-export type ItemStatus =
-  | "ordered"
-  | "inbound_shipped"
-  | "in_stock"
-  | "outbound_shipped"
-  | "delivered"
-  | "cancelled";
-export type OrderStatus = ItemStatus;
-export type ShipmentStatus = "shipped" | "delivered";
-export type ShipmentDirection = "inbound" | "outbound";
-export type Carrier = "yamato" | "sagawa" | "other";
-export type ExpectedShipPeriod = "early" | "mid" | "late";
+import type {
+  ActionLogOut,
+  FinanceMonthBucket,
+  FinanceOutboundBucket,
+  FinanceSummaryOut,
+  ItemCreate as GeneratedItemCreate,
+  ItemOut,
+  LineCreate as GeneratedLineCreate,
+  LineOut,
+  OrderCreate as GeneratedOrderCreate,
+  OrderGroupOut,
+  OrderOut,
+  OrderRequestCreate as GeneratedOrderRequestCreate,
+  OrderRequestOut,
+  OrderRequestPublicOut,
+  OutboundBatchOut,
+  OutboundBoxOut,
+  ScrapeProduct as GeneratedScrapeProduct,
+  ScrapeResult as GeneratedScrapeResult,
+  ShipmentItemOut,
+  ShipmentOut,
+  StatsOut,
+  StockBoxChildOut,
+  StockBoxLineOut,
+  StockBoxOrderOut,
+  StockBoxOut,
+  UserOut,
+} from "./api-types.generated";
 
-export interface Line {
-  id: number;
-  order_id: number;
-  name: string;
-  shop: string;
-  order_ref: string;
-  qty: number;
-  unit_cost: number | null;
-  status: ItemStatus;
-  ordered_at: string;
-  arrived_at: string | null;
-  expected_ship_at: string | null;
-  expected_ship_period: ExpectedShipPeriod | null;
-  barcode: string;
-  note: string;
-  animegood_product_id: number | null;
-  ip: string;
-  product_kind: string;
-  image_url: string;
-  source_url: string;
-  inbound_tracking_no: string | null;
-  inbound_carrier: Carrier | null;
-  inbound_tracking_url: string | null;
-  inbound_shipment_id: number | null;
-  outbound_tracking_no: string | null;
-  outbound_carrier: Carrier | null;
-  outbound_tracking_url: string | null;
-  outbound_shipment_id: number | null;
-  outbound_box_no: number | null;
-}
+export type ItemStatus = LineOut["status"];
+export type OrderStatus = OrderOut["status"];
+export type ShipmentStatus = ShipmentOut["status"];
+export type ShipmentDirection = ShipmentOut["direction"];
+export type Carrier = ShipmentOut["carrier"];
+export type ExpectedShipPeriod = NonNullable<LineOut["expected_ship_period"]>;
 
+export type Line = LineOut;
 /** @deprecated alias for Line */
-export type Item = Line & {
-  order_qty?: number | null;
-  order_image_url?: string;
-};
-
-export interface Order {
-  id: number;
-  order_ref: string;
-  shop: string;
-  status: OrderStatus;
-  ordered_at: string;
-  order_qty: number | null;
-  shipping_fee: number | null;
-  exchange_rate: number | null;
-  order_image_url: string;
-  note: string;
-  expected_ship_at: string | null;
-  expected_ship_period: ExpectedShipPeriod | null;
-  line_count: number;
-  total_qty: number;
-  goods_total: number | null;
-  order_total: number | null;
-  goods_total_cny: number | null;
-  shipping_fee_cny: number | null;
-  order_total_cny: number | null;
-  lines: Line[];
-}
-
-export interface OrderGroupInBox {
-  order_id: number | null;
-  order_ref: string;
-  items: ShipmentItem[];
-}
-
-export interface ShipmentItem {
-  id: number;
-  order_id?: number | null;
-  order_ref?: string;
-  name: string;
-  shop: string;
-  qty: number;
-  status: ItemStatus;
-  barcode: string;
-}
-
-export interface Shipment {
-  id: number;
-  direction: ShipmentDirection;
-  carrier: Carrier;
-  tracking_no: string;
-  tracking_url: string | null;
-  shipped_at: string;
-  delivered_at: string | null;
-  status: ShipmentStatus;
-  order_id?: number | null;
-  batch_id?: number | null;
-  box_no?: number | null;
-  items: ShipmentItem[];
-  order_groups?: OrderGroupInBox[];
-}
-
-export interface OutboundBox {
-  id: number;
-  batch_id: number;
-  box_no: number;
-  carrier: Carrier;
-  tracking_no: string;
-  tracking_url: string | null;
-  status: ShipmentStatus;
-  shipped_at: string;
-  delivered_at: string | null;
-  note?: string;
-  net_weight?: number | null;
-  gross_weight?: number | null;
-  length_cm?: number | null;
-  width_cm?: number | null;
-  height_cm?: number | null;
-  items: ShipmentItem[];
-  order_groups: OrderGroupInBox[];
-}
-
-export type PaymentStatus = "unpaid" | "partial" | "paid";
-
-export interface OutboundBatch {
-  id: number;
-  note: string;
-  created_at: string;
-  boxes: OutboundBox[];
-  box_count: number;
-  item_count: number;
-  goods_jpy: number | null;
-  order_shipping_jpy: number | null;
-  goods_receivable_cny: number | null;
-  freight_exchange_rate: number | null;
-  freight_unit_price_jpy: number | null;
-  chargeable_weight: number | null;
-  freight_cny: number | null;
-  amount_receivable_cny: number | null;
-  amount_received_cny: number;
-  amount_unreceived_cny: number | null;
-  payment_status: PaymentStatus;
-  payment_note: string;
-  invoice_ship_date?: string | null;
-}
-
-export interface FinanceMonthBucket {
-  goods_jpy: number;
-  shipping_jpy: number;
-  total_jpy: number;
-  goods_cny: number | null;
-  shipping_cny: number | null;
-  total_cny: number | null;
-  order_count: number;
-  missing_rate_count: number;
-}
-
-export interface FinanceOutboundBucket {
-  goods_jpy: number;
-  goods_receivable_cny: number | null;
-  freight_cny: number | null;
-  amount_receivable_cny: number | null;
-  amount_received_cny: number;
-  amount_unreceived_cny: number | null;
-  batch_count: number;
-}
-
-export interface FinanceSummary {
-  month: string;
-  ordered: FinanceMonthBucket;
-  outbound: FinanceOutboundBucket;
-}
-
-export interface StockBoxLine {
-  id: number;
-  order_id: number;
-  name: string;
-  shop: string;
-  order_ref: string;
-  qty: number;
-  status: ItemStatus;
-  image_url: string;
-  barcode: string;
-  ip?: string;
-  product_kind?: string;
-  note?: string;
-  source_url?: string;
-}
-
-export interface StockBoxOrder {
-  id: number;
-  order_ref: string;
-  shop: string;
-  status: OrderStatus;
-  line_count: number;
-  total_qty: number;
-  lines: StockBoxLine[];
-}
-
-export interface StockBoxChild {
-  id: number;
-  box_no: number;
-  note: string;
-  order_count: number;
-  item_count: number;
-}
-
-export interface StockBox {
-  id: number;
-  box_no: number;
-  note: string;
-  created_at: string;
-  parent_id: number | null;
-  parent_box_no: number | null;
-  child_boxes: StockBoxChild[];
-  order_ids: number[];
-  order_count: number;
-  item_count: number;
-  orders: StockBoxOrder[];
-}
-
-export interface Stats {
-  ordered: number;
-  inbound_shipped: number;
-  in_stock: number;
-  outbound_shipped: number;
-  delivered: number;
-  cancelled: number;
-  inbound_shipments_shipped: number;
-  outbound_shipments_shipped: number;
-  shipments_delivered: number;
-  orders_total: number;
-}
-
-export interface LineCreate {
-  name: string;
-  shop?: string;
-  qty?: number;
-  unit_cost?: number | null;
-  note?: string;
-  animegood_product_id?: number | null;
-  ip?: string;
-  product_kind?: string;
-  image_url?: string;
-  source_url?: string;
-  expected_ship_at?: string | null;
-  expected_ship_period?: ExpectedShipPeriod | null;
-  barcode?: string;
-}
-
-export interface OrderCreate {
-  order_ref?: string;
-  shop?: string;
-  order_qty?: number | null;
-  shipping_fee?: number | null;
-  exchange_rate?: number | null;
-  order_image_url?: string;
-  note?: string;
-  expected_ship_at?: string | null;
-  expected_ship_period?: ExpectedShipPeriod | null;
-  lines: LineCreate[];
-}
-
-export interface ItemCreate extends LineCreate {
-  order_ref?: string;
-  order_qty?: number | null;
-  order_image_url?: string;
-}
-
-export interface ScrapeProduct {
-  name: string;
-  shop: string;
-  unit_cost: number | null;
-  image_url: string;
-  source_url: string;
-  ip: string;
-  barcode?: string;
-  qty?: number | null;
-  expected_ship_at?: string | null;
-  expected_ship_period?: ExpectedShipPeriod | null;
-  release_date?: string | null;
-}
-
-export interface ScrapeResult {
-  kind: "list";
-  products: ScrapeProduct[];
-  message: string;
-  order_ref?: string;
-  shipping_fee?: number | null;
-  order_total?: number | null;
-}
+export type Item = ItemOut;
+export type Order = OrderOut;
+export type OrderGroupInBox = OrderGroupOut;
+export type ShipmentItem = ShipmentItemOut;
+export type Shipment = ShipmentOut;
+export type OutboundBox = OutboundBoxOut;
+export type PaymentStatus = OutboundBatchOut["payment_status"];
+export type OutboundBatch = OutboundBatchOut;
+export type { FinanceMonthBucket, FinanceOutboundBucket };
+export type FinanceSummary = FinanceSummaryOut;
+export type StockBoxLine = StockBoxLineOut;
+export type StockBoxOrder = StockBoxOrderOut;
+export type StockBoxChild = StockBoxChildOut;
+export type StockBox = StockBoxOut;
+export type Stats = StatsOut;
+export type LineCreate = GeneratedLineCreate;
+export type OrderCreate = GeneratedOrderCreate;
+export type ItemCreate = GeneratedItemCreate;
+export type ScrapeProduct = GeneratedScrapeProduct;
+export type ScrapeResult = GeneratedScrapeResult;
 
 export interface AppMeta {
   db_mode: "production" | "shadow";
@@ -313,88 +77,12 @@ export interface AppMeta {
   deposit_rate?: number;
 }
 
-export type UserRole = "admin" | "warehouse" | "finance" | "customer";
-
-export interface AuthUser {
-  id: number;
-  email: string;
-  display_name: string;
-  role: UserRole;
-  is_active: boolean;
-  created_at: string;
-}
-
-export type OrderRequestStatus =
-  | "pending_payment"
-  | "submitted"
-  | "ordered"
-  | "rejected";
-
-export interface OrderRequestPublic {
-  request_code: string;
-  account_order_no?: string;
-  status: OrderRequestStatus;
-  status_label: string;
-  name: string;
-  shop: string;
-  unit_cost: number | null;
-  amount?: number | null;
-  image_url: string;
-  source_url: string;
-  qty: number;
-  shop_order_ref: string;
-  ordered_at: string | null;
-  staff_note: string;
-  reject_reason: string;
-  created_at: string;
-  updated_at: string;
-  deposit_rate?: number | null;
-  deposit_amount?: number | null;
-  deposit_paid_at?: string | null;
-  payment_ref?: string;
-}
-
-export interface OrderRequest {
-  id: number;
-  request_code: string;
-  account_order_no?: string;
-  status: OrderRequestStatus;
-  name: string;
-  shop: string;
-  unit_cost: number | null;
-  image_url: string;
-  source_url: string;
-  ip: string;
-  barcode: string;
-  qty: number;
-  contact: string;
-  note: string;
-  shop_order_ref: string;
-  ordered_at: string | null;
-  staff_note: string;
-  reject_reason: string;
-  stock_order_id: number | null;
-  user_id?: number | null;
-  deposit_rate?: number | null;
-  deposit_amount?: number | null;
-  deposit_paid_at?: string | null;
-  payment_ref?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface OrderRequestCreate {
-  name: string;
-  shop?: string;
-  unit_cost?: number | null;
-  image_url?: string;
-  source_url: string;
-  ip?: string;
-  barcode?: string;
-  qty?: number;
-  contact?: string;
-  note?: string;
-}
+export type UserRole = UserOut["role"];
+export type AuthUser = UserOut;
+export type OrderRequestStatus = OrderRequestOut["status"];
+export type OrderRequestPublic = OrderRequestPublicOut;
+export type OrderRequest = OrderRequestOut;
+export type OrderRequestCreate = GeneratedOrderRequestCreate;
 
 // ============================================================
 // FEATURE: AUTH
@@ -427,15 +115,7 @@ export interface TunnelStatus {
   stale: boolean;
 }
 
-export interface ActionLog {
-  id: number;
-  action_type: string;
-  summary: string;
-  created_at: string;
-  undone_at: string | null;
-  undoable: boolean;
-  actor_user_id?: number | null;
-}
+export type ActionLog = ActionLogOut;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const adminToken = getAdminToken();

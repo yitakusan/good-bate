@@ -1,12 +1,13 @@
 {
   "name": "stockgood-frontend",
-  "version": "0.9.14",
+  "version": "0.9.16",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "gen-api-types": "python ../scripts/gen-api-types.py"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",

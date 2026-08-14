@@ -17,7 +17,7 @@
 
 最后更新：2026-08-14
 
-当前产品版本：**0.9.14**
+当前产品版本：**0.9.16**
 
 ### 当前稳定功能
 
@@ -36,7 +36,6 @@
 ### 当前正在开发
 
 - 无进行中的业务功能开发。
-- 2026-08-14 已完成（**仅文档/导航，不是产品功能**）：AI 代码导航 + 长期上下文机制。尚未 git commit；**未经用户明确要求不得 commit**。
 
 ### 待实现 / 旧行为（用户 2026-08-14 确认，不是 bug）
 
@@ -58,8 +57,9 @@
 
 1. 用户未指定下一业务任务；新会话先读 Handoff，不要自行开功能。
 2. 个人主页 / 规范第 8 节 **等用户明示「开始实现」** 再做。
-3. 导航注释与相关文档未提交；明确要求前不执行 git commit。
-4. 可交付**业务**改动才写 `CHANGELOG.md` + 升版本。不要把文档规划说成已实现功能。
+3. 明确要求前不执行 git commit。
+4. 可交付改动写 `CHANGELOG.md` + 升版本。不要把文档规划说成已实现功能。
+5. 新迁移加到 `backend/app/schema_migrations.py` 的 `MIGRATIONS` 列表，保持幂等；改 Pydantic 模型后跑 `python scripts/gen-api-types.py`。
 
 ---
 
@@ -98,6 +98,99 @@ FEATURE: XXXXX
 ### 不要做
 
 - ...
+
+---
+
+## Handoff - 2026-08-14
+
+### 当前任务
+
+把测试从「有」补到能挡住导出写错格、双鉴权漏权、进库确认撤回、改批次货款重算。
+
+### 已完成
+
+- INV：双 Sheet 名（`PACKING LIST ` 尾随空格）、PACKING **F5** 写 INV 号且 **F6 不被占用**、预览 `FIT0`、模板文件哈希不变
+- 费用明细：`发货费用明细` + `对应订单`、表头与订单号/件数、模板不被写回
+- Cookie 与 `X-Admin-Token`：无凭证 401、错 token 401、仅 token 当管理员；已登录顾客/仓库**不会**被 token 提权
+- 进库确认撤回 → `inbound_shipped`；编辑批次改数量后货款 225→175 CNY
+- 版本 **0.9.16**
+
+### 未完成
+
+- 未经用户明确要求不得 git commit
+- 未抽 App.tsx hooks / 未拆 main.py routers
+- 规范第 8 节仍待实现
+
+### 下一步建议
+
+- 架构还债下一刀：从 `App.tsx` 抽 hooks（不改布局）
+- 业务功能等用户下一条指令
+
+### 关键文件
+
+- `backend/tests/test_exports.py`
+- `backend/tests/test_auth_roles.py`
+- `backend/tests/test_order_flow.py`
+- `backend/tests/factories.py` / `harness.py`
+
+### 需要特别注意
+
+- 测试仍禁止写生产库或共享影子库
+- 不要拆 App/api.ts/main.py；不要把第 8 节当 bug
+- 不要写回 INV / 费用明细模板文件
+
+### 不要做
+
+- 不要为了测试改导出格位或鉴权行为
+- 不要在用户明确要求前 commit
+
+---
+
+## Handoff - 2026-08-14
+
+### 当前任务
+
+基础设施：可记录迁移、关键路径测试、OpenAPI 生成 TS 类型（不拆 App/main、不改业务规则）。
+
+### 已完成
+
+- `schema_migrations` + `backend/app/schema_migrations.py`（现有幂等步骤登记后可跳过）
+- `STOCKGOOD_DATABASE_PATH` 覆盖库路径；unittest 只用临时 sqlite
+- `backend/tests/`：状态流 / 合箱 / 出库锁定+撤回 / 角色 / 迁移（含 UNIQUE 拆除保 `shipment_items`）
+- `scripts/gen-api-types.py` → `frontend/src/api-types.generated.ts`；`api.ts` 类型改为引用
+- 版本 **0.9.15**
+
+### 未完成
+
+- 未经用户明确要求不得 git commit
+- 未拆 `App.tsx` / `main.py`（有意）
+- 规范第 8 节仍待实现
+
+### 下一步建议
+
+- 新迁移只追加 `MIGRATIONS`，保持幂等；改 Pydantic 后跑 `python scripts/gen-api-types.py`
+- 跑测试：`backend/.venv/Scripts/python.exe -m unittest discover -s tests -v`（在 `backend/` 下）
+- 业务功能等用户下一条指令
+
+### 关键文件
+
+- `backend/app/schema_migrations.py`
+- `backend/app/database.py` / `backend/app/settings.py`
+- `backend/tests/`
+- `scripts/gen-api-types.py`
+- `frontend/src/api-types.generated.ts` / `frontend/src/api.ts`
+
+### 需要特别注意
+
+- 测试**禁止**写 `stockgood.sqlite` 或共享 `stockgood.shadow.sqlite`
+- 去掉 tracking UNIQUE 时仍须先 `conn.commit()` 再 `PRAGMA foreign_keys=OFF`
+- 不要拆 App/api.ts/main.py；不要把第 8 节当 bug
+
+### 不要做
+
+- 不要引入 Alembic / openapi-typescript 除非用户要求
+- 不要把 fetch 封装整文件改成生成代码
+- 不要在用户明确要求前 commit
 
 ---
 
@@ -160,6 +253,62 @@ FEATURE: XXXXX
 ---
 
 ## 2026-08-14
+
+### FEATURE: INV_EXPORT / FEE_DETAIL / AUTH / ACTION_LOG / OUTBOUND_BATCH
+
+#### 修改内容
+
+- 补 unittest：导出模板契约、Cookie 与遗留 token 双路径、进库确认撤回、编辑批次重算货款
+- 不改导出填充逻辑、不改鉴权规则
+
+#### 涉及文件
+
+- `backend/tests/test_exports.py`
+- `backend/tests/test_auth_roles.py`
+- `backend/tests/test_order_flow.py`
+- `backend/tests/factories.py`
+- `backend/tests/harness.py`（`STOCKGOOD_ADMIN_TOKEN` 按用例隔离）
+
+#### 原因
+
+JSON/OpenAPI 测不到 Excel 格位；只测 Cookie 测不到旧口令门。改数量后若不重算会锁错应收。
+
+#### 用户确认
+
+- 用户要求做架构还债第 4 步（挡得住导出和双鉴权，含撤回与改批次重算）
+
+---
+
+### FEATURE: SYSTEM
+
+#### 修改内容
+
+- 列迁移从 `init_db` 内联改为具名幂等步骤，写入 `schema_migrations`
+- unittest 经 `STOCKGOOD_DATABASE_PATH` 使用临时库，避免污染影子库
+- OpenAPI → `api-types.generated.ts`，停止在 `api.ts` 手抄 Pydantic 模型
+
+#### 涉及文件
+
+- `backend/app/schema_migrations.py`
+- `backend/app/database.py`
+- `backend/app/settings.py`
+- `backend/tests/`
+- `scripts/gen-api-types.py`
+- `frontend/src/api.ts` / `frontend/src/api-types.generated.ts`
+
+#### 原因
+
+架构评审优先项：迁移可追踪、关键路径可回归、前后端类型单一来源。不拆大文件、不改业务规则。
+
+#### 影响范围
+
+启动路径仍 `init_db()`；旧库第一次启动会跑完全部步骤并打戳。API 行为不变。
+
+#### 用户确认
+
+- 用户：「现在就改吧」（针对迁移记录 / 关键测试 / 生成 TS 类型）
+
+---
 
 ### FEATURE: INV_EXPORT
 

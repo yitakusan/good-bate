@@ -35,6 +35,15 @@
 | 前端热更新 `http://localhost:5175` | 开发界面（**不要**用 `8003/apply` 看开发页） |
 | `customer@stockgood.local` / `Customer12` | 客户示例账号 |
 
+单元测试（不写生产库、不写共享影子库）：
+
+```text
+cd backend
+.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+改 Pydantic 模型后重新生成前端类型：`python scripts/gen-api-types.py`（在 `stockgood/` 下，用 `backend/.venv`）。
+
 ## 能力
 
 | 能力 | 说明 |

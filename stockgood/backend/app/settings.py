@@ -47,6 +47,9 @@ class Settings(BaseSettings):
     notify_enabled: bool = True
     # Deposit rate for customer apply (0.3 = 30%); finance gateway later
     deposit_rate: float = 0.3
+    # Env STOCKGOOD_DATABASE_PATH: tests point at a temp sqlite so they never
+    # touch production or the shared shadow file. Empty/unset → db_mode path.
+    database_path: Optional[Path] = None
 
     @field_validator("db_mode", mode="before")
     @classmethod
@@ -84,6 +87,15 @@ class Settings(BaseSettings):
                 return False
         return value
 
+    @field_validator("database_path", mode="before")
+    @classmethod
+    def empty_database_path_as_none(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator(
         "session_secret",
         "bootstrap_admin_email",
@@ -99,12 +111,6 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
-
-    @property
-    def database_path(self) -> Path:
-        if self.db_mode == "shadow":
-            return DATA_DIR / "stockgood.shadow.sqlite"
-        return DATA_DIR / "stockgood.sqlite"
 
     @property
     def is_shadow(self) -> bool:

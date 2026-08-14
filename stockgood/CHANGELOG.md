@@ -4,6 +4,24 @@
 
 项目主版本见根目录 `VERSION`，并与 `backend/app/main.py`、`frontend/package.json` 保持一致。
 
+## [0.9.16] - 2026-08-14
+
+### 新增
+
+- 关键路径测试补齐：INV / 费用明细模板契约（含 `PACKING LIST ` 空格与 PACKING F5 而非 F6）、Cookie 与遗留 `X-Admin-Token` 双鉴权、进库确认撤回、编辑批次后货款重算
+
+## [0.9.15] - 2026-08-14
+
+### 新增
+
+- 启动时把幂等列迁移记入 `schema_migrations`，已应用的步骤下次跳过
+- 关键路径 unittest（临时 sqlite，不写生产库或共享影子库）：订单状态流、合箱互斥、出库锁定货款、撤回、角色权限、迁移
+- 从 OpenAPI 生成 `frontend/src/api-types.generated.ts`，`api.ts` 的请求/响应类型改为引用生成结果
+
+### 变更
+
+- 可用环境变量 `STOCKGOOD_DATABASE_PATH` 覆盖 SQLite 文件路径（供测试指向临时库）
+
 ## [0.9.14] - 2026-08-14
 
 ### 新增
