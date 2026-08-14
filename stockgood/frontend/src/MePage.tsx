@@ -7,7 +7,6 @@ import {
   confirmDeposit,
   fetchMe,
   fetchMyOrderRequests,
-  logout,
 } from "./api";
 
 function errorText(error: unknown) {
@@ -114,18 +113,6 @@ export default function MePage() {
         </div>
         <div className="me-actions">
           <a href="/apply">申请下单</a>
-          <button
-            type="button"
-            className="btn"
-            onClick={() => {
-              void logout().then(() => {
-                setUser(null);
-                setRequests([]);
-              });
-            }}
-          >
-            退出
-          </button>
         </div>
       </header>
 

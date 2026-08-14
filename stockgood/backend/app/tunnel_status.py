@@ -20,25 +20,95 @@ URL_FILE = LOGS / "tunnel-url.txt"
 PID_FILE = LOGS / "tunnel.pid"
 LOG_FILE = LOGS / "tunnel.log"
 FRONTEND_URL = "http://127.0.0.1:5174"
+# Match Stockgood's tunnel only — ignore other apps' cloudflared processes.
+_OUR_TARGET_RE = re.compile(r"127\.0\.0\.1:5174|localhost:5174", re.I)
 
 _URL_RE = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
 _reader_lock = threading.Lock()
 _log_lock = threading.Lock()
 
 
-def _cloudflared_running() -> bool:
+def _pid_alive(pid: int) -> bool:
+    if pid <= 0:
+        return False
     try:
         completed = subprocess.run(
-            ["tasklist", "/FI", "IMAGENAME eq cloudflared.exe", "/NH"],
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
             capture_output=True,
             text=True,
             timeout=5,
             check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         out = (completed.stdout or "") + (completed.stderr or "")
-        return "cloudflared.exe" in out.lower()
+        return str(pid) in out
     except Exception:
         return False
+
+
+def _list_cloudflared() -> list[tuple[int, str]]:
+    """Return (pid, command_line) for every cloudflared.exe."""
+    if os.name != "nt":
+        return []
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process -Filter \"Name = 'cloudflared.exe'\" "
+                "| ForEach-Object { '{0}\t{1}' -f $_.ProcessId, $_.CommandLine }",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            check=False,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+    except Exception:
+        return []
+    rows: list[tuple[int, str]] = []
+    for line in (completed.stdout or "").splitlines():
+        text = line.strip()
+        if not text or "\t" not in text:
+            continue
+        pid_s, cmd = text.split("\t", 1)
+        try:
+            pid = int(pid_s)
+        except ValueError:
+            continue
+        rows.append((pid, cmd or ""))
+    return rows
+
+
+def _our_tunnel_pids() -> list[int]:
+    """PIDs that belong to Stockgood's frontend tunnel (port 5174)."""
+    found: list[int] = []
+    seen: set[int] = set()
+    for pid, cmd in _list_cloudflared():
+        if _OUR_TARGET_RE.search(cmd):
+            if pid not in seen:
+                found.append(pid)
+                seen.add(pid)
+    # PID file from a previous start (may still be alive even if cmdline parse failed)
+    try:
+        if PID_FILE.is_file():
+            raw = PID_FILE.read_text(encoding="utf-8").strip()
+            if raw.isdigit():
+                pid = int(raw)
+                if pid not in seen and _pid_alive(pid):
+                    # Only trust pid file if cmdline points at us, or no cmdline available
+                    cmdline = next((c for p, c in _list_cloudflared() if p == pid), "")
+                    if not cmdline or _OUR_TARGET_RE.search(cmdline):
+                        found.append(pid)
+                        seen.add(pid)
+    except Exception:
+        pass
+    return found
+
+
+def _cloudflared_running() -> bool:
+    return bool(_our_tunnel_pids())
 
 
 def _find_cloudflared() -> str | None:
@@ -174,7 +244,7 @@ def start_tunnel() -> dict[str, object]:
         threading.Thread(target=_pipe_reader, args=(proc,), daemon=True).start()
 
     # Brief wait for URL to appear in logs.
-    for _ in range(20):
+    for _ in range(40):
         time.sleep(0.25)
         if _read_url():
             break
@@ -191,8 +261,8 @@ def start_tunnel() -> dict[str, object]:
 
 
 def stop_tunnel() -> dict[str, object]:
-    running = _cloudflared_running()
-    if not running and not _read_url():
+    pids = _our_tunnel_pids()
+    if not pids and not _read_url():
         status = get_tunnel_status()
         status["ok"] = True
         status["message"] = "隧道未在运行"
@@ -200,20 +270,19 @@ def stop_tunnel() -> dict[str, object]:
 
     try:
         if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/IM", "cloudflared.exe", "/F"],
-                capture_output=True,
-                text=True,
-                timeout=15,
-                check=False,
-            )
-        else:
-            pid_text = ""
-            if PID_FILE.is_file():
-                pid_text = PID_FILE.read_text(encoding="utf-8").strip()
-            if pid_text.isdigit():
+            for pid in pids:
                 subprocess.run(
-                    ["kill", "-TERM", pid_text],
+                    ["taskkill", "/PID", str(pid), "/F", "/T"],
+                    capture_output=True,
+                    text=True,
+                    timeout=15,
+                    check=False,
+                    creationflags=subprocess.CREATE_NO_WINDOW,
+                )
+        else:
+            for pid in pids:
+                subprocess.run(
+                    ["kill", "-TERM", str(pid)],
                     capture_output=True,
                     text=True,
                     timeout=10,

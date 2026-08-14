@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   AuthUser,
@@ -10,6 +10,7 @@ import {
   fetchMeta,
   fetchMyOrderRequests,
   fetchPublicOrderRequests,
+  logout,
   publicScrapeUrl,
 } from "./api";
 import { batchScrapeDelayMs, waitForBatchScrape } from "./scrapeDelay";
@@ -72,6 +73,8 @@ export default function ApplyPage() {
   const [depositRate, setDepositRate] = useState(0.3);
   const [pendingMine, setPendingMine] = useState<OrderRequestPublic[]>([]);
   const [depositBusy, setDepositBusy] = useState("");
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement | null>(null);
 
   const [requests, setRequests] = useState<OrderRequestPublic[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
@@ -126,6 +129,36 @@ export default function ApplyPage() {
     void loadRequests();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter]);
+
+  useEffect(() => {
+    if (!accountMenuOpen) return;
+    function onDocClick(ev: MouseEvent) {
+      const root = accountMenuRef.current;
+      if (root && !root.contains(ev.target as Node)) {
+        setAccountMenuOpen(false);
+      }
+    }
+    function onKey(ev: KeyboardEvent) {
+      if (ev.key === "Escape") setAccountMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [accountMenuOpen]);
+
+  async function onAccountLogout() {
+    setAccountMenuOpen(false);
+    try {
+      await logout();
+    } catch {
+      /* still clear local session UI */
+    }
+    setAuthUser(null);
+    setPendingMine([]);
+  }
 
   const selectedDepositTotal = (() => {
     let goods = 0;
@@ -380,16 +413,40 @@ export default function ApplyPage() {
             批量粘贴商品链接抓取后勾选提交；下方可查看已申请订单进度。
           </p>
         </div>
-        <div className="apply-account">
+        <div className="apply-account" ref={accountMenuRef}>
           {authUser ? (
-            <>
-              <span className="apply-account-name" title={authUser.email}>
+            <div className={`apply-account-menu${accountMenuOpen ? " open" : ""}`}>
+              <button
+                type="button"
+                className="apply-account-name"
+                title={authUser.email}
+                aria-expanded={accountMenuOpen}
+                aria-haspopup="menu"
+                onClick={() => setAccountMenuOpen((open) => !open)}
+              >
                 {authUser.display_name || authUser.email}
-              </span>
-              <a className="apply-account-link" href="/me">
-                下单历史
-              </a>
-            </>
+              </button>
+              {accountMenuOpen ? (
+                <div className="apply-account-dropdown" role="menu">
+                  <a
+                    role="menuitem"
+                    className="apply-account-dropdown-item"
+                    href="/me"
+                    onClick={() => setAccountMenuOpen(false)}
+                  >
+                    个人主页
+                  </a>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="apply-account-dropdown-item"
+                    onClick={() => void onAccountLogout()}
+                  >
+                    退出
+                  </button>
+                </div>
+              ) : null}
+            </div>
           ) : (
             <a className="apply-account-link" href="/me">
               登录查看我的申请

@@ -84,7 +84,7 @@ from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
-APP_VERSION = "0.9.2"
+APP_VERSION = "0.9.5"
 
 OPENAPI_TAGS = [
     {"name": "系统", "description": "健康检查、元信息与 Cloudflare 隧道"},
