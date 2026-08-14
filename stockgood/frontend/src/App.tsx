@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import AuthPanel from "./AuthPanel";
 import {
@@ -32,6 +32,8 @@ import {
   deleteStockBox,
   detachStockBoxChild,
   downloadOutboundFeeDetail,
+  downloadOutboundInv,
+  downloadOutboundInvPreview,
   addStockBoxOrders,
   fetchActionLogs,
   fetchApplyReport,
@@ -63,6 +65,7 @@ import {
   undoActionLog,
   updateItem,
   updateOrder,
+  updateOutboundBatch,
   updateOutboundBatchFinance,
   updateStockBox,
 } from "./api";
@@ -90,11 +93,201 @@ type DraftBox = {
   box_no: number;
   carrier: Carrier;
   tracking_no: string;
+  note: string;
   item_ids: number[];
+  net_weight: string;
+  gross_weight: string;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
 };
+
+type BatchEditItem = {
+  item_id: number;
+  name: string;
+  order_ref: string;
+  qty: number;
+};
+
+type BatchEditBox = {
+  box_no: number;
+  carrier: Carrier;
+  tracking_no: string;
+  note: string;
+  items: BatchEditItem[];
+  net_weight: string;
+  gross_weight: string;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
+};
+
+function AutoGrowTextarea({
+  value,
+  onChange,
+  placeholder,
+  className,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  className?: string;
+}) {
+  const ref = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${Math.max(el.scrollHeight, 40)}px`;
+  }, [value]);
+  return (
+    <textarea
+      ref={ref}
+      className={className}
+      rows={1}
+      value={value}
+      placeholder={placeholder}
+      onChange={(e) => onChange(e.target.value)}
+    />
+  );
+}
 
 function newDraftBoxUid() {
   return `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+const OUTBOUND_DRAFT_KEY = "stockgood.outboundDraft.v1";
+
+type OutboundDraftPersisted = {
+  draftBoxes: DraftBox[];
+  batchNote: string;
+  freightExchangeRate: string;
+  freightUnitPrice: string;
+  chargeableWeight: string;
+  invoiceShipDate: string;
+  outboundAllowMissingBarcode: boolean;
+  outboundMissingBarcodeNote: string;
+  showAssignedOutboundPick: boolean;
+};
+
+function emptyPackingFields() {
+  return {
+    net_weight: "",
+    gross_weight: "",
+    length_cm: "",
+    width_cm: "",
+    height_cm: "",
+  };
+}
+
+function parseOptionalNonNeg(raw: string): number | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const n = Number(text);
+  if (Number.isNaN(n) || n < 0) return null;
+  return n;
+}
+
+function packingPayloadFromStrings(box: {
+  net_weight: string;
+  gross_weight: string;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
+}) {
+  return {
+    net_weight: parseOptionalNonNeg(box.net_weight),
+    gross_weight: parseOptionalNonNeg(box.gross_weight),
+    length_cm: parseOptionalNonNeg(box.length_cm),
+    width_cm: parseOptionalNonNeg(box.width_cm),
+    height_cm: parseOptionalNonNeg(box.height_cm),
+  };
+}
+
+function packingFieldsComplete(box: {
+  net_weight: string;
+  gross_weight: string;
+  length_cm: string;
+  width_cm: string;
+  height_cm: string;
+}) {
+  return (
+    parseOptionalNonNeg(box.net_weight) != null &&
+    parseOptionalNonNeg(box.gross_weight) != null &&
+    parseOptionalNonNeg(box.length_cm) != null &&
+    parseOptionalNonNeg(box.width_cm) != null &&
+    parseOptionalNonNeg(box.height_cm) != null
+  );
+}
+
+function todayIsoDate() {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+function numOrEmpty(v: number | null | undefined) {
+  return v == null || Number.isNaN(Number(v)) ? "" : String(v);
+}
+
+function loadOutboundDraft(): OutboundDraftPersisted | null {
+  try {
+    const raw = localStorage.getItem(OUTBOUND_DRAFT_KEY);
+    if (!raw) return null;
+    const data = JSON.parse(raw) as Partial<OutboundDraftPersisted>;
+    if (!Array.isArray(data.draftBoxes)) return null;
+    const draftBoxes: DraftBox[] = data.draftBoxes
+      .map((box) => ({
+        uid: String(box?.uid || newDraftBoxUid()),
+        box_no: Number(box?.box_no) || 1,
+        carrier:
+          box?.carrier === "yamato" || box?.carrier === "sagawa"
+            ? box.carrier
+            : ("other" as Carrier),
+        tracking_no: String(box?.tracking_no || ""),
+        note: String(box?.note || ""),
+        item_ids: Array.isArray(box?.item_ids)
+          ? box.item_ids.map((id) => Number(id)).filter((id) => id > 0)
+          : [],
+        net_weight: String(box?.net_weight || ""),
+        gross_weight: String(box?.gross_weight || ""),
+        length_cm: String(box?.length_cm || ""),
+        width_cm: String(box?.width_cm || ""),
+        height_cm: String(box?.height_cm || ""),
+      }))
+      .filter((box) => box.item_ids.length > 0);
+    return {
+      draftBoxes,
+      batchNote: String(data.batchNote || ""),
+      freightExchangeRate: String(data.freightExchangeRate || ""),
+      freightUnitPrice: String(data.freightUnitPrice || ""),
+      chargeableWeight: String(data.chargeableWeight || ""),
+      invoiceShipDate: String(data.invoiceShipDate || ""),
+      outboundAllowMissingBarcode: !!data.outboundAllowMissingBarcode,
+      outboundMissingBarcodeNote: String(data.outboundMissingBarcodeNote || ""),
+      showAssignedOutboundPick: !!data.showAssignedOutboundPick,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveOutboundDraft(draft: OutboundDraftPersisted) {
+  try {
+    localStorage.setItem(OUTBOUND_DRAFT_KEY, JSON.stringify(draft));
+  } catch {
+    /* ignore quota / private mode */
+  }
+}
+
+function clearOutboundDraft() {
+  try {
+    localStorage.removeItem(OUTBOUND_DRAFT_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 const STATUS_LABEL: Record<ItemStatus, string> = {
   ordered: "已下单",
@@ -307,6 +500,9 @@ export default function App() {
   const [expandedOutboundOrderIds, setExpandedOutboundOrderIds] = useState<
     number[]
   >([]);
+  const [expandedOutboundStockBoxIds, setExpandedOutboundStockBoxIds] = useState<
+    number[]
+  >([]);
   const [expandedDraftBoxUids, setExpandedDraftBoxUids] = useState<string[]>(
     [],
   );
@@ -325,18 +521,41 @@ export default function App() {
   const [expandedInventoryOrderIds, setExpandedInventoryOrderIds] = useState<
     number[]
   >([]);
-  const [draftBoxes, setDraftBoxes] = useState<DraftBox[]>([]);
-  const [batchNote, setBatchNote] = useState("");
-  const [freightExchangeRate, setFreightExchangeRate] = useState("");
-  const [freightUnitPrice, setFreightUnitPrice] = useState("");
-  const [chargeableWeight, setChargeableWeight] = useState("");
+  const [outboundDraftBoot] = useState(() => loadOutboundDraft());
+  const [draftBoxes, setDraftBoxes] = useState<DraftBox[]>(
+    () => outboundDraftBoot?.draftBoxes || [],
+  );
+  const [batchNote, setBatchNote] = useState(
+    () => outboundDraftBoot?.batchNote || "",
+  );
+  const [freightExchangeRate, setFreightExchangeRate] = useState(
+    () => outboundDraftBoot?.freightExchangeRate || "",
+  );
+  const [freightUnitPrice, setFreightUnitPrice] = useState(
+    () => outboundDraftBoot?.freightUnitPrice || "",
+  );
+  const [chargeableWeight, setChargeableWeight] = useState(
+    () => outboundDraftBoot?.chargeableWeight || "",
+  );
+  const [invoiceShipDate, setInvoiceShipDate] = useState(
+    () => outboundDraftBoot?.invoiceShipDate || "",
+  );
   const [batchReceivedDraft, setBatchReceivedDraft] = useState<
     Record<number, string>
   >({});
   const [outboundAllowMissingBarcode, setOutboundAllowMissingBarcode] =
-    useState(false);
-  const [outboundMissingBarcodeNote, setOutboundMissingBarcodeNote] =
-    useState("");
+    useState(() => outboundDraftBoot?.outboundAllowMissingBarcode || false);
+  const [outboundMissingBarcodeNote, setOutboundMissingBarcodeNote] = useState(
+    () => outboundDraftBoot?.outboundMissingBarcodeNote || "",
+  );
+  const [showAssignedOutboundPick, setShowAssignedOutboundPick] = useState(
+    () => outboundDraftBoot?.showAssignedOutboundPick || false,
+  );
+  const [editingBatchId, setEditingBatchId] = useState<number | null>(null);
+  const [batchEditNote, setBatchEditNote] = useState("");
+  const [batchEditInvoiceShipDate, setBatchEditInvoiceShipDate] = useState("");
+  const [batchEditBoxes, setBatchEditBoxes] = useState<BatchEditBox[]>([]);
+  const [batchEditBusy, setBatchEditBusy] = useState(false);
 
   const inboundLines = useMemo(
     () =>
@@ -356,6 +575,47 @@ export default function App() {
     }
     return map;
   }, [stockBoxes]);
+
+  /** Outbound pick list: merged stock boxes first, then unboxed orders. */
+  const outboundPickSections = useMemo(() => {
+    const orderFullyAssigned = (lines: Line[]) =>
+      lines.length > 0 && lines.every((line) => assignedIds.has(line.id));
+
+    let orderGroups = groupLines(stockLines);
+    if (!showAssignedOutboundPick) {
+      orderGroups = orderGroups.filter(
+        ([, group]) => !orderFullyAssigned(group.lines),
+      );
+    }
+
+    const byBoxId = new Map<number, typeof orderGroups>();
+    const unboxed: typeof orderGroups = [];
+    for (const entry of orderGroups) {
+      const box = stockBoxByOrderId.get(entry[0]);
+      if (!box) {
+        unboxed.push(entry);
+        continue;
+      }
+      const list = byBoxId.get(box.id) || [];
+      list.push(entry);
+      byBoxId.set(box.id, list);
+    }
+    const boxed = stockBoxes
+      .filter((box) => byBoxId.has(box.id))
+      .slice()
+      .sort((a, b) => a.box_no - b.box_no || a.id - b.id)
+      .map((box) => ({
+        box,
+        orderGroups: byBoxId.get(box.id) || [],
+      }));
+    return { boxed, unboxed };
+  }, [
+    stockLines,
+    stockBoxes,
+    stockBoxByOrderId,
+    assignedIds,
+    showAssignedOutboundPick,
+  ]);
 
   async function loadChrome() {
     const nextMeta = await fetchMeta();
@@ -521,6 +781,51 @@ export default function App() {
     if (ids.length) setSelectedInboundIds(ids);
     setPreferredInboundOrderIds([]);
   }, [tab, preferredInboundOrderIds, inboundLines]);
+
+  useEffect(() => {
+    saveOutboundDraft({
+      draftBoxes,
+      batchNote,
+      freightExchangeRate,
+      freightUnitPrice,
+      chargeableWeight,
+      invoiceShipDate,
+      outboundAllowMissingBarcode,
+      outboundMissingBarcodeNote,
+      showAssignedOutboundPick,
+    });
+  }, [
+    draftBoxes,
+    batchNote,
+    freightExchangeRate,
+    freightUnitPrice,
+    chargeableWeight,
+    invoiceShipDate,
+    outboundAllowMissingBarcode,
+    outboundMissingBarcodeNote,
+    showAssignedOutboundPick,
+  ]);
+
+  useEffect(() => {
+    if (!draftBoxes.length || !stockLines.length) return;
+    const inStock = new Set(stockLines.map((line) => line.id));
+    let changed = false;
+    const next = draftBoxes
+      .map((box) => {
+        const item_ids = box.item_ids.filter((id) => inStock.has(id));
+        if (item_ids.length !== box.item_ids.length) changed = true;
+        return { ...box, item_ids };
+      })
+      .filter((box) => box.item_ids.length > 0);
+    if (changed || next.length !== draftBoxes.length) {
+      setDraftBoxes(next);
+      const keep = new Set(next.map((box) => box.uid));
+      setExpandedDraftBoxUids((uids) => uids.filter((uid) => keep.has(uid)));
+      setExpandedDraftOrderKeys((keys) =>
+        keys.filter((key) => keep.has(key.split(":")[0] || "")),
+      );
+    }
+  }, [stockLines, draftBoxes]);
 
   async function onSearch(event: FormEvent) {
     event.preventDefault();
@@ -1013,11 +1318,34 @@ export default function App() {
     }
   }
 
+  function selectableLineIdsForOrder(orderId: number): number[] {
+    return stockLines
+      .filter((line) => line.order_id === orderId)
+      .map((line) => line.id)
+      .filter((id) => showAssignedOutboundPick || !assignedIds.has(id));
+  }
+
+  function selectableLineIdsForStockBox(box: StockBox): number[] {
+    const orderIds = new Set(box.order_ids);
+    return stockLines
+      .filter((line) => orderIds.has(line.order_id))
+      .map((line) => line.id)
+      .filter((id) => showAssignedOutboundPick || !assignedIds.has(id));
+  }
+
   function toggleStockOrder(line: Line) {
-    const ids = stockLines
-      .filter((candidate) => candidate.order_id === line.order_id)
-      .map((candidate) => candidate.id)
-      .filter((id) => !assignedIds.has(id));
+    const ids = selectableLineIdsForOrder(line.order_id);
+    setSelectedStockIds((current) => {
+      const allSelected = ids.length > 0 && ids.every((id) => current.includes(id));
+      return allSelected
+        ? current.filter((id) => !ids.includes(id))
+        : [...new Set([...current, ...ids])];
+    });
+  }
+
+  function toggleStockBox(box: StockBox) {
+    const ids = selectableLineIdsForStockBox(box);
+    if (!ids.length) return;
     setSelectedStockIds((current) => {
       const allSelected = ids.every((id) => current.includes(id));
       return allSelected
@@ -1029,6 +1357,12 @@ export default function App() {
   function toggleOutboundOrderExpanded(orderId: number) {
     setExpandedOutboundOrderIds((ids) =>
       ids.includes(orderId) ? ids.filter((id) => id !== orderId) : [...ids, orderId],
+    );
+  }
+
+  function toggleOutboundStockBoxExpanded(boxId: number) {
+    setExpandedOutboundStockBoxIds((ids) =>
+      ids.includes(boxId) ? ids.filter((id) => id !== boxId) : [...ids, boxId],
     );
   }
 
@@ -1239,8 +1573,11 @@ export default function App() {
       uid: newDraftBoxUid(),
       box_no: startNo + index,
       carrier: "other" as Carrier,
-      tracking_no: "",
+      tracking_no:
+        draftBoxes.find((box) => box.tracking_no.trim())?.tracking_no || "",
+      note: "",
       item_ids: groups.get(key) || [],
+      ...emptyPackingFields(),
     }));
     setDraftBoxes((current) => [...current, ...suggested]);
     setExpandedDraftBoxUids((uids) => [
@@ -1260,16 +1597,25 @@ export default function App() {
       return;
     }
     const uid = newDraftBoxUid();
+    const ids = [...selectedStockIds];
     setDraftBoxes((current) => [
-      ...current,
+      ...current
+        .map((box) => ({
+          ...box,
+          item_ids: box.item_ids.filter((id) => !ids.includes(id)),
+        }))
+        .filter((box) => box.item_ids.length > 0),
       {
         uid,
         box_no: current.length
           ? Math.max(...current.map((box) => box.box_no)) + 1
           : 1,
-        carrier: "other",
-        tracking_no: "",
-        item_ids: selectedStockIds,
+        carrier: "other" as Carrier,
+        tracking_no:
+          current.find((box) => box.tracking_no.trim())?.tracking_no || "",
+        note: "",
+        item_ids: ids,
+        ...emptyPackingFields(),
       },
     ]);
     setExpandedDraftBoxUids((uids) =>
@@ -1279,11 +1625,48 @@ export default function App() {
     setError("");
   }
 
+  function addSelectedToDraftBox(targetIndex: number) {
+    if (!selectedStockIds.length) {
+      setError("请先在上方勾选要并入的订单");
+      return;
+    }
+    const target = draftBoxes[targetIndex];
+    if (!target) return;
+    const ids = [...selectedStockIds];
+    const next = draftBoxes
+      .map((box, index) => {
+        if (index === targetIndex) {
+          return {
+            ...box,
+            item_ids: [...new Set([...box.item_ids, ...ids])],
+          };
+        }
+        return {
+          ...box,
+          item_ids: box.item_ids.filter((id) => !ids.includes(id)),
+        };
+      })
+      .filter((box) => box.item_ids.length > 0);
+    const keep = new Set(next.map((box) => box.uid));
+    setDraftBoxes(next);
+    setExpandedDraftBoxUids((uids) => uids.filter((uid) => keep.has(uid)));
+    setExpandedDraftOrderKeys((keys) =>
+      keys.filter((key) => keep.has(key.split(":")[0] || "")),
+    );
+    setSelectedStockIds([]);
+    setMessage(`已并入箱 ${target.box_no}（${ids.length} 行）`);
+    setError("");
+  }
+
   function updateDraftBox(index: number, patch: Partial<DraftBox>) {
     setDraftBoxes((current) =>
-      current.map((box, boxIndex) =>
-        boxIndex === index ? { ...box, ...patch } : box,
-      ),
+      current.map((box, boxIndex) => {
+        const next = boxIndex === index ? { ...box, ...patch } : box;
+        if (patch.tracking_no !== undefined) {
+          return { ...next, tracking_no: patch.tracking_no };
+        }
+        return next;
+      }),
     );
   }
 
@@ -1322,8 +1705,8 @@ export default function App() {
       );
       return;
     }
-    if (draftBoxes.some((box) => !box.tracking_no.trim())) {
-      setError("请填写每个箱子的快递单号");
+    if (draftBoxes.every((box) => !box.tracking_no.trim())) {
+      setError("请填写本批次运单号");
       return;
     }
     const noBarcode = stockLines.filter(
@@ -1361,13 +1744,18 @@ export default function App() {
       return;
     }
     try {
+      const batchTracking =
+        draftBoxes.find((box) => box.tracking_no.trim())?.tracking_no.trim() ||
+        "";
       await createOutboundBatch({
         note: batchNote.trim(),
         boxes: draftBoxes.map((box) => ({
           box_no: box.box_no,
           carrier: box.carrier,
-          tracking_no: box.tracking_no.trim(),
+          tracking_no: batchTracking,
+          note: box.note.trim(),
           item_ids: box.item_ids,
+          ...packingPayloadFromStrings(box),
         })),
         allow_missing_barcode: outboundAllowMissingBarcode && noBarcode.length > 0,
         missing_barcode_note:
@@ -1377,6 +1765,7 @@ export default function App() {
         freight_exchange_rate: freightRate,
         freight_unit_price_jpy: unitPrice,
         chargeable_weight: weight,
+        invoice_ship_date: invoiceShipDate.trim() || null,
       });
       setDraftBoxes([]);
       setExpandedDraftBoxUids([]);
@@ -1386,8 +1775,10 @@ export default function App() {
       setFreightExchangeRate("");
       setFreightUnitPrice("");
       setChargeableWeight("");
+      setInvoiceShipDate("");
       setOutboundAllowMissingBarcode(false);
       setOutboundMissingBarcodeNote("");
+      clearOutboundDraft();
       setMessage("出库批次已创建（货款应收已锁定）");
       await refresh();
     } catch (err) {
@@ -1486,7 +1877,190 @@ export default function App() {
     try {
       await confirmOutboundBatch(id);
       setMessage("已确认批次签收");
+      if (editingBatchId === id) {
+        setEditingBatchId(null);
+        setBatchEditBoxes([]);
+      }
       await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  function startEditBatch(batch: OutboundBatch) {
+    if (batch.boxes.some((box) => box.status === "delivered")) {
+      setError("已有箱子签收，不能再编辑该批次");
+      return;
+    }
+    setEditingBatchId(batch.id);
+    setBatchEditNote(batch.note || "");
+    setBatchEditInvoiceShipDate(batch.invoice_ship_date || "");
+    setBatchEditBoxes(
+      batch.boxes.map((box) => ({
+        box_no: box.box_no,
+        carrier: box.carrier,
+        tracking_no: box.tracking_no,
+        note: box.note || "",
+        items: box.items.map((item) => ({
+          item_id: item.id,
+          name: item.name,
+          order_ref: item.order_ref || `订单 #${item.order_id}`,
+          qty: item.qty,
+        })),
+        net_weight: numOrEmpty(box.net_weight),
+        gross_weight: numOrEmpty(box.gross_weight),
+        length_cm: numOrEmpty(box.length_cm),
+        width_cm: numOrEmpty(box.width_cm),
+        height_cm: numOrEmpty(box.height_cm),
+      })),
+    );
+    setError("");
+  }
+
+  function cancelEditBatch() {
+    setEditingBatchId(null);
+    setBatchEditBoxes([]);
+    setBatchEditNote("");
+    setBatchEditInvoiceShipDate("");
+  }
+
+  function updateBatchEditBox(index: number, patch: Partial<BatchEditBox>) {
+    setBatchEditBoxes((current) =>
+      current.map((box, i) => {
+        const next = i === index ? { ...box, ...patch } : box;
+        if (patch.tracking_no !== undefined) {
+          return { ...next, tracking_no: patch.tracking_no };
+        }
+        return next;
+      }),
+    );
+  }
+
+  function updateBatchEditItemQty(
+    boxIndex: number,
+    itemId: number,
+    qtyRaw: string,
+  ) {
+    const qty = Number(qtyRaw);
+    setBatchEditBoxes((current) =>
+      current.map((box, i) =>
+        i !== boxIndex
+          ? box
+          : {
+              ...box,
+              items: box.items.map((item) =>
+                item.item_id === itemId
+                  ? {
+                      ...item,
+                      qty: Number.isFinite(qty) && qty >= 1 ? qty : item.qty,
+                    }
+                  : item,
+              ),
+            },
+      ),
+    );
+  }
+
+  function removeBatchEditItem(boxIndex: number, itemId: number) {
+    setBatchEditBoxes((current) =>
+      current
+        .map((box, i) =>
+          i !== boxIndex
+            ? box
+            : {
+                ...box,
+                items: box.items.filter((item) => item.item_id !== itemId),
+              },
+        )
+        .filter((box) => box.items.length > 0),
+    );
+  }
+
+  async function onSaveEditBatch() {
+    if (editingBatchId == null) return;
+    if (!batchEditBoxes.length) {
+      setError("编辑后至少保留一箱");
+      return;
+    }
+    if (batchEditBoxes.every((box) => !box.tracking_no.trim())) {
+      setError("请填写本批次运单号");
+      return;
+    }
+    if (batchEditBoxes.some((box) => !box.items.length)) {
+      setError("每箱至少保留一行商品");
+      return;
+    }
+    setBatchEditBusy(true);
+    setError("");
+    try {
+      const batchTracking =
+        batchEditBoxes.find((box) => box.tracking_no.trim())?.tracking_no.trim() ||
+        "";
+      await updateOutboundBatch(editingBatchId, {
+        note: batchEditNote,
+        invoice_ship_date: batchEditInvoiceShipDate.trim() || null,
+        boxes: batchEditBoxes.map((box) => ({
+          box_no: box.box_no,
+          carrier: box.carrier,
+          tracking_no: batchTracking,
+          note: box.note.trim(),
+          items: box.items.map((item) => ({
+            item_id: item.item_id,
+            qty: item.qty,
+          })),
+          ...packingPayloadFromStrings(box),
+        })),
+      });
+      setMessage(`批次 #${editingBatchId} 已保存`);
+      cancelEditBatch();
+      await loadOutbound();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setBatchEditBusy(false);
+    }
+  }
+
+  async function onExportDraftInv() {
+    if (!draftBoxes.length) {
+      setError("请先完成分箱后再导出 INV");
+      return;
+    }
+    if (draftBoxes.every((box) => !box.tracking_no.trim())) {
+      setError("导出 INV 前请填写本批次运单号");
+      return;
+    }
+    if (draftBoxes.some((box) => !packingFieldsComplete(box))) {
+      setError("导出 INV 前请填写各箱净重、毛重与长宽高（cm）");
+      return;
+    }
+    const rateRaw = freightExchangeRate.trim();
+    const unitRaw = freightUnitPrice.trim();
+    const weightRaw = chargeableWeight.trim();
+    const freightRate = rateRaw === "" ? null : Number(rateRaw);
+    const unitPrice = unitRaw === "" ? null : Number(unitRaw);
+    const weight = weightRaw === "" ? null : Number(weightRaw);
+    try {
+      const batchTracking =
+        draftBoxes.find((box) => box.tracking_no.trim())?.tracking_no.trim() ||
+        "";
+      await downloadOutboundInvPreview({
+        note: batchNote.trim(),
+        boxes: draftBoxes.map((box) => ({
+          box_no: box.box_no,
+          carrier: box.carrier,
+          tracking_no: batchTracking,
+          note: box.note.trim(),
+          item_ids: box.item_ids,
+          ...packingPayloadFromStrings(box),
+        })),
+        freight_exchange_rate: freightRate,
+        freight_unit_price_jpy: unitPrice,
+        chargeable_weight: weight,
+        invoice_ship_date: invoiceShipDate.trim() || todayIsoDate(),
+      });
+      setMessage("已导出 INV 预览（创建出库批次前）");
+      setError("");
     } catch (err) {
       setError(errorText(err));
     }
@@ -3348,102 +3922,282 @@ export default function App() {
             </div>
           )}
           <h2>1. 选择完整订单</h2>
+          <p className="muted">
+            已合箱的订单按库存箱分组；勾选箱头可选中该箱全部在库行；点「展开」可再按单勾选。
+          </p>
           <div className="item-pick">
             {stockLines.length === 0 ? (
               <div className="empty">没有可出库的在库货品</div>
+            ) : outboundPickSections.boxed.length === 0 &&
+              outboundPickSections.unboxed.length === 0 ? (
+              <div className="empty">
+                {showAssignedOutboundPick
+                  ? "没有可出库的在库货品"
+                  : "已全部分配到下方箱子；勾选「显示已分配」可再查看"}
+              </div>
             ) : (
-              groupLines(stockLines).map(([orderId, group]) => {
-                const selectableIds = group.lines
-                  .map((line) => line.id)
-                  .filter((id) => !assignedIds.has(id));
-                const orderChecked =
-                  selectableIds.length > 0 &&
-                  selectableIds.every((id) => selectedStockIds.includes(id));
-                const allAssigned = selectableIds.length === 0;
-                const expanded = expandedOutboundOrderIds.includes(orderId);
-                const missingCount = group.lines.filter(
-                  (line) => !(line.barcode || "").trim(),
-                ).length;
-                return (
-                  <div className="order-sub" key={orderId}>
-                    <div className="order-sub-head">
-                      <div className="order-sub-check">
-                        <label className="order-check">
-                          <input
-                            type="checkbox"
-                            disabled={allAssigned}
-                            checked={orderChecked || allAssigned}
-                            onChange={() => toggleStockOrder(group.lines[0])}
-                          />
-                        </label>
+              <>
+                {outboundPickSections.boxed.map(({ box, orderGroups }) => {
+                  const boxSelectableIds = selectableLineIdsForStockBox(box);
+                  const boxChecked =
+                    boxSelectableIds.length > 0 &&
+                    boxSelectableIds.every((id) =>
+                      selectedStockIds.includes(id),
+                    );
+                  const boxAllAssigned = boxSelectableIds.length === 0;
+                  const boxExpanded = expandedOutboundStockBoxIds.includes(
+                    box.id,
+                  );
+                  return (
+                    <div className="order-sub outbound-stock-box" key={`box-${box.id}`}>
+                      <div className="order-sub-head">
+                        <div className="order-sub-check">
+                          <label className="order-check">
+                            <input
+                              type="checkbox"
+                              disabled={boxAllAssigned}
+                              checked={boxChecked || boxAllAssigned}
+                              onChange={() => toggleStockBox(box)}
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="order-ref-btn"
+                            onClick={() =>
+                              toggleOutboundStockBoxExpanded(box.id)
+                            }
+                          >
+                            库存箱 #{box.box_no}
+                            {box.parent_box_no != null
+                              ? ` · 子箱（主箱 #${box.parent_box_no}）`
+                              : (box.child_boxes?.length ?? 0) > 0
+                                ? " · 主箱"
+                                : ""}
+                          </button>
+                          <span className="muted">
+                            {" "}
+                            · {orderGroups.length} 单 · {boxSelectableIds.length}{" "}
+                            行可分
+                          </span>
+                          {box.note ? (
+                            <span className="badge in_stock">{box.note}</span>
+                          ) : null}
+                        </div>
                         <button
                           type="button"
-                          className="order-ref-btn mono"
-                          onClick={() => toggleOutboundOrderExpanded(orderId)}
-                        >
-                          {group.orderRef}
-                        </button>
-                        <span className="muted"> · {group.lines.length} 行</span>
-                        {missingCount > 0 && (
-                          <span className="badge warn-badge">
-                            {missingCount} 件无条码
-                          </span>
-                        )}
-                        {stockBoxByOrderId.get(orderId) && (
-                          <span className="badge in_stock">
-                            库存箱 #{stockBoxByOrderId.get(orderId)!.box_no}
-                          </span>
-                        )}
-                      </div>
-                      <button
-                        type="button"
-                        className="btn"
-                        onClick={() => toggleOutboundOrderExpanded(orderId)}
-                      >
-                        {expanded ? "收起" : "明细"}
-                      </button>
-                    </div>
-                    {expanded &&
-                      group.lines.map((line) => (
-                        <label
-                          key={line.id}
-                          className={
-                            assignedIds.has(line.id) ? "source-disabled" : ""
+                          className="btn"
+                          onClick={() =>
+                            toggleOutboundStockBoxExpanded(box.id)
                           }
                         >
-                          <input
-                            type="checkbox"
-                            disabled={assignedIds.has(line.id)}
-                            checked={
-                              selectedStockIds.includes(line.id) ||
-                              assignedIds.has(line.id)
-                            }
-                            onChange={() => toggleStockOrder(line)}
-                          />
-                          {line.image_url ? (
-                            <img
-                              className="thumb"
-                              src={line.image_url}
-                              alt=""
-                              referrerPolicy="no-referrer"
+                          {boxExpanded ? "收起" : "展开"}
+                        </button>
+                      </div>
+                      {boxExpanded &&
+                        orderGroups.map(([orderId, group]) => {
+                        const selectableIds = selectableLineIdsForOrder(orderId);
+                        const orderChecked =
+                          selectableIds.length > 0 &&
+                          selectableIds.every((id) =>
+                            selectedStockIds.includes(id),
+                          );
+                        const allAssigned = selectableIds.length === 0;
+                        const expanded =
+                          expandedOutboundOrderIds.includes(orderId);
+                        const missingCount = group.lines.filter(
+                          (line) => !(line.barcode || "").trim(),
+                        ).length;
+                        return (
+                          <div className="order-sub outbound-box-order" key={orderId}>
+                            <div className="order-sub-head">
+                              <div className="order-sub-check">
+                                <label className="order-check">
+                                  <input
+                                    type="checkbox"
+                                    disabled={allAssigned}
+                                    checked={orderChecked || allAssigned}
+                                    onChange={() =>
+                                      toggleStockOrder(group.lines[0])
+                                    }
+                                  />
+                                </label>
+                                <button
+                                  type="button"
+                                  className="order-ref-btn mono"
+                                  onClick={() =>
+                                    toggleOutboundOrderExpanded(orderId)
+                                  }
+                                >
+                                  {group.orderRef}
+                                </button>
+                                <span className="muted">
+                                  {" "}
+                                  · {group.lines.length} 行
+                                </span>
+                                {missingCount > 0 && (
+                                  <span className="badge warn-badge">
+                                    {missingCount} 件无条码
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                className="btn"
+                                onClick={() =>
+                                  toggleOutboundOrderExpanded(orderId)
+                                }
+                              >
+                                {expanded ? "收起" : "明细"}
+                              </button>
+                            </div>
+                            {expanded &&
+                              group.lines.map((line) => (
+                                <label
+                                  key={line.id}
+                                  className={
+                                    assignedIds.has(line.id) &&
+                                    !showAssignedOutboundPick
+                                      ? "source-disabled"
+                                      : ""
+                                  }
+                                >
+                                  <input
+                                    type="checkbox"
+                                    disabled={
+                                      assignedIds.has(line.id) &&
+                                      !showAssignedOutboundPick
+                                    }
+                                    checked={
+                                      selectedStockIds.includes(line.id) ||
+                                      (assignedIds.has(line.id) &&
+                                        !showAssignedOutboundPick)
+                                    }
+                                    onChange={() => toggleStockOrder(line)}
+                                  />
+                                  {line.image_url ? (
+                                    <img
+                                      className="thumb"
+                                      src={line.image_url}
+                                      alt=""
+                                      referrerPolicy="no-referrer"
+                                    />
+                                  ) : (
+                                    <span className="thumb placeholder" />
+                                  )}
+                                  <span>
+                                    {line.name}
+                                    <span className="muted">
+                                      {" "}
+                                      · x{line.qty}
+                                      {assignedIds.has(line.id)
+                                        ? " · 已分箱"
+                                        : ""}
+                                      {!(line.barcode || "").trim()
+                                        ? " · 无条码"
+                                        : ""}
+                                    </span>
+                                  </span>
+                                </label>
+                              ))}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  );
+                })}
+                {outboundPickSections.unboxed.map(([orderId, group]) => {
+                  const selectableIds = selectableLineIdsForOrder(orderId);
+                  const orderChecked =
+                    selectableIds.length > 0 &&
+                    selectableIds.every((id) => selectedStockIds.includes(id));
+                  const allAssigned = selectableIds.length === 0;
+                  const expanded = expandedOutboundOrderIds.includes(orderId);
+                  const missingCount = group.lines.filter(
+                    (line) => !(line.barcode || "").trim(),
+                  ).length;
+                  return (
+                    <div className="order-sub" key={orderId}>
+                      <div className="order-sub-head">
+                        <div className="order-sub-check">
+                          <label className="order-check">
+                            <input
+                              type="checkbox"
+                              disabled={allAssigned}
+                              checked={orderChecked || allAssigned}
+                              onChange={() => toggleStockOrder(group.lines[0])}
                             />
-                          ) : (
-                            <span className="thumb placeholder" />
-                          )}
-                          <span>
-                            {line.name}
-                            <span className="muted">
-                              {" "}
-                              · x{line.qty}
-                              {assignedIds.has(line.id) ? " · 已分箱" : ""}
-                              {!(line.barcode || "").trim() ? " · 无条码" : ""}
+                          </label>
+                          <button
+                            type="button"
+                            className="order-ref-btn mono"
+                            onClick={() => toggleOutboundOrderExpanded(orderId)}
+                          >
+                            {group.orderRef}
+                          </button>
+                          <span className="muted"> · {group.lines.length} 行</span>
+                          {missingCount > 0 && (
+                            <span className="badge warn-badge">
+                              {missingCount} 件无条码
                             </span>
-                          </span>
-                        </label>
-                      ))}
-                  </div>
-                );
-              })
+                          )}
+                        </div>
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() => toggleOutboundOrderExpanded(orderId)}
+                        >
+                          {expanded ? "收起" : "明细"}
+                        </button>
+                      </div>
+                      {expanded &&
+                        group.lines.map((line) => (
+                          <label
+                            key={line.id}
+                            className={
+                              assignedIds.has(line.id) &&
+                              !showAssignedOutboundPick
+                                ? "source-disabled"
+                                : ""
+                            }
+                          >
+                            <input
+                              type="checkbox"
+                              disabled={
+                                assignedIds.has(line.id) &&
+                                !showAssignedOutboundPick
+                              }
+                              checked={
+                                selectedStockIds.includes(line.id) ||
+                                (assignedIds.has(line.id) &&
+                                  !showAssignedOutboundPick)
+                              }
+                              onChange={() => toggleStockOrder(line)}
+                            />
+                            {line.image_url ? (
+                              <img
+                                className="thumb"
+                                src={line.image_url}
+                                alt=""
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <span className="thumb placeholder" />
+                            )}
+                            <span>
+                              {line.name}
+                              <span className="muted">
+                                {" "}
+                                · x{line.qty}
+                                {assignedIds.has(line.id) ? " · 已分箱" : ""}
+                                {!(line.barcode || "").trim() ? " · 无条码" : ""}
+                              </span>
+                            </span>
+                          </label>
+                        ))}
+                    </div>
+                  );
+                })}
+              </>
             )}
           </div>
           <div className="toolbar">
@@ -3453,9 +4207,20 @@ export default function App() {
             <button type="button" className="btn" onClick={applyStockBoxSuggestions}>
               按合箱建议分箱
             </button>
+            <label className="inline-check">
+              <input
+                type="checkbox"
+                checked={showAssignedOutboundPick}
+                onChange={(e) => setShowAssignedOutboundPick(e.target.checked)}
+              />
+              显示已分配
+            </label>
           </div>
 
           <h2>2. 编辑箱子</h2>
+          <p className="muted">
+            草稿分箱会保存在本机，刷新页面不会丢；创建出库批次成功后自动清空。
+          </p>
           {draftBoxes.length === 0 ? (
             <div className="empty">尚未创建箱子</div>
           ) : (
@@ -3478,7 +4243,7 @@ export default function App() {
                     >
                       箱 {box.box_no}
                     </button>
-                    <span className="muted">
+                      <span className="muted">
                       {" "}
                       · {CARRIER_LABEL[box.carrier]}
                       {box.tracking_no.trim()
@@ -3486,6 +4251,9 @@ export default function App() {
                         : " · 未填单号"}
                       {" · "}
                       {orderGroups.length} 单 · {lines.length} 行
+                      {box.note.trim()
+                        ? ` · ${box.note.trim().slice(0, 24)}${box.note.trim().length > 24 ? "…" : ""}`
+                        : ""}
                     </span>
                     {missingCount > 0 && (
                       <span className="badge warn-badge">
@@ -3498,6 +4266,17 @@ export default function App() {
                       onClick={() => toggleDraftBoxExpanded(box.uid)}
                     >
                       {boxExpanded ? "收起" : "明细"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={!selectedStockIds.length}
+                      onClick={() => addSelectedToDraftBox(index)}
+                    >
+                      并入已选
+                      {selectedStockIds.length
+                        ? `（${selectedStockIds.length}）`
+                        : ""}
                     </button>
                   </div>
                   {boxExpanded && (
@@ -3531,6 +4310,85 @@ export default function App() {
                                 tracking_no: e.target.value,
                               })
                             }
+                          />
+                        </label>
+                        <label>
+                          净重 (kg)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={box.net_weight}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                net_weight: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          毛重 (kg)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={box.gross_weight}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                gross_weight: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          长 (cm)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={box.length_cm}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                length_cm: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          宽 (cm)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={box.width_cm}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                width_cm: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          高 (cm)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={box.height_cm}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                height_cm: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="full">
+                          本箱备注
+                          <AutoGrowTextarea
+                            className="box-note-textarea"
+                            value={box.note}
+                            placeholder="仅本箱，随文字增高"
+                            onChange={(note) => updateDraftBox(index, { note })}
                           />
                         </label>
                       </div>
@@ -3659,6 +4517,14 @@ export default function App() {
                 onChange={(e) => setChargeableWeight(e.target.value)}
               />
             </label>
+            <label>
+              发货日期
+              <input
+                type="date"
+                value={invoiceShipDate}
+                onChange={(e) => setInvoiceShipDate(e.target.value)}
+              />
+            </label>
           </div>
           <label className="inline-check">
             <input
@@ -3678,13 +4544,25 @@ export default function App() {
               />
             </label>
           )}
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => void onCreateOutbound()}
-          >
-            创建出库批次（{draftBoxes.length} 箱）
-          </button>
+          <div className="toolbar">
+            <button
+              type="button"
+              className="btn"
+              onClick={() => void onExportDraftInv()}
+            >
+              导出 INV
+            </button>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => void onCreateOutbound()}
+            >
+              创建出库批次（{draftBoxes.length} 箱）
+            </button>
+          </div>
+          <p className="muted">
+            建议先核对分箱、包装尺寸与运单后导出 INV，再创建出库批次；已创建批次也可随时导出 INV。
+          </p>
 
           <h2>已有出库批次</h2>
           {batches.length === 0 ? <div className="empty">暂无出库批次</div> : batches.map((batch) => (
@@ -3713,6 +4591,31 @@ export default function App() {
                   <button
                     type="button"
                     className="btn"
+                    onClick={() => {
+                      const incomplete = batch.boxes.find(
+                        (box) =>
+                          box.net_weight == null ||
+                          box.gross_weight == null ||
+                          box.length_cm == null ||
+                          box.width_cm == null ||
+                          box.height_cm == null,
+                      );
+                      if (incomplete) {
+                        setError(
+                          `导出 INV 前请先点「编辑批次」，填写第 ${incomplete.box_no} 箱净重、毛重与长宽高（cm）`,
+                        );
+                        return;
+                      }
+                      void downloadOutboundInv(batch.id).catch((err) =>
+                        setError(errorText(err)),
+                      );
+                    }}
+                  >
+                    导出 INV
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
                     onClick={() =>
                       void downloadOutboundFeeDetail(batch.id).catch((err) =>
                         setError(errorText(err)),
@@ -3721,6 +4624,19 @@ export default function App() {
                   >
                     费用明细 Excel
                   </button>
+                  {batch.boxes.every((box) => box.status === "shipped") && (
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={() =>
+                        editingBatchId === batch.id
+                          ? cancelEditBatch()
+                          : startEditBatch(batch)
+                      }
+                    >
+                      {editingBatchId === batch.id ? "取消编辑" : "编辑批次"}
+                    </button>
+                  )}
                   {batch.boxes.some((box) => box.status === "shipped") && (
                     <button
                       type="button"
@@ -3732,6 +4648,199 @@ export default function App() {
                   )}
                 </div>
               </header>
+              {editingBatchId === batch.id ? (
+                <div className="batch-edit-panel">
+                  <label className="full">
+                    批次备注
+                    <AutoGrowTextarea
+                      className="box-note-textarea"
+                      value={batchEditNote}
+                      placeholder="批次备注"
+                      onChange={setBatchEditNote}
+                    />
+                  </label>
+                  <label>
+                    发货日期
+                    <input
+                      type="date"
+                      value={batchEditInvoiceShipDate}
+                      onChange={(e) =>
+                        setBatchEditInvoiceShipDate(e.target.value)
+                      }
+                    />
+                  </label>
+                  {batchEditBoxes.map((box, boxIndex) => (
+                    <div className="box-card" key={`edit-${batch.id}-${boxIndex}`}>
+                      <div className="form-grid">
+                        <label>
+                          箱号
+                          <input
+                            type="number"
+                            min={1}
+                            value={box.box_no}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                box_no: Number(e.target.value) || 1,
+                              })
+                            }
+                          />
+                        </label>
+                        <CarrierSelect
+                          value={box.carrier}
+                          onChange={(value) =>
+                            updateBatchEditBox(boxIndex, { carrier: value })
+                          }
+                        />
+                        <label>
+                          快递单号 *
+                          <input
+                            value={box.tracking_no}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                tracking_no: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          净重 (kg)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={box.net_weight}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                net_weight: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          毛重 (kg)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.01"
+                            value={box.gross_weight}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                gross_weight: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          长 (cm)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={box.length_cm}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                length_cm: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          宽 (cm)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={box.width_cm}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                width_cm: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          高 (cm)
+                          <input
+                            type="number"
+                            min={0}
+                            step="0.1"
+                            value={box.height_cm}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                height_cm: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label className="full">
+                          本箱备注
+                          <AutoGrowTextarea
+                            className="box-note-textarea"
+                            value={box.note}
+                            placeholder="本箱备注"
+                            onChange={(note) =>
+                              updateBatchEditBox(boxIndex, { note })
+                            }
+                          />
+                        </label>
+                      </div>
+                      {box.items.map((item) => (
+                        <div className="order-line-compact" key={item.item_id}>
+                          <span className="mono muted">{item.order_ref}</span>
+                          <span className="ellipsis" title={item.name}>
+                            {item.name}
+                          </span>
+                          <label className="inline-filter">
+                            数量
+                            <input
+                              type="number"
+                              min={1}
+                              value={item.qty}
+                              onChange={(e) =>
+                                updateBatchEditItemQty(
+                                  boxIndex,
+                                  item.item_id,
+                                  e.target.value,
+                                )
+                              }
+                            />
+                          </label>
+                          <button
+                            type="button"
+                            className="btn btn-danger"
+                            onClick={() =>
+                              removeBatchEditItem(boxIndex, item.item_id)
+                            }
+                          >
+                            移出
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ))}
+                  <div className="toolbar">
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={batchEditBusy}
+                      onClick={() => void onSaveEditBatch()}
+                    >
+                      {batchEditBusy ? "保存中…" : "保存批次修改"}
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={batchEditBusy}
+                      onClick={cancelEditBatch}
+                    >
+                      取消
+                    </button>
+                  </div>
+                  <p className="muted">
+                    移出的商品会回到在库；仍须保持订单整单出库。已签收批次不可编辑。
+                  </p>
+                </div>
+              ) : null}
               <form
                 className="form-grid"
                 onSubmit={(e) => {
@@ -3802,6 +4911,9 @@ export default function App() {
               {batch.boxes.map((box) => (
                 <div className="box-card" key={box.id}>
                   <strong>箱 {box.box_no}</strong> · {CARRIER_LABEL[box.carrier]} · <span className="mono">{box.tracking_no}</span> · <span className={`badge ${box.status === "delivered" ? "delivered" : "outbound_shipped"}`}>{box.status === "delivered" ? "已签收" : "运输中"}</span>
+                  {box.note ? (
+                    <div className="muted box-note-display">{box.note}</div>
+                  ) : null}
                   <OrderGroups groups={box.order_groups} fallback={box.items} />
                 </div>
               ))}

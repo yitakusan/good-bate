@@ -43,6 +43,62 @@ def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str)
         conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
 
+def _shipments_tracking_has_unique(conn: sqlite3.Connection) -> bool:
+    if not _table_exists(conn, "shipments"):
+        return False
+    for idx in conn.execute("PRAGMA index_list(shipments)").fetchall():
+        if not idx["unique"]:
+            continue
+        cols = conn.execute(
+            f"PRAGMA index_info({idx['name']})"
+        ).fetchall()
+        names = [c["name"] for c in cols]
+        if names == ["tracking_no"]:
+            return True
+    return False
+
+
+def _drop_shipments_tracking_unique(conn: sqlite3.Connection) -> None:
+    """Allow the same tracking number on multiple outbound boxes in one batch."""
+    if not _shipments_tracking_has_unique(conn):
+        return
+    info = list(conn.execute("PRAGMA table_info(shipments)"))
+    parts: list[str] = []
+    for col in info:
+        name = col["name"]
+        if name == "id":
+            parts.append("id INTEGER PRIMARY KEY AUTOINCREMENT")
+            continue
+        line = f"{name} {col['type'] or 'TEXT'}"
+        if col["notnull"]:
+            line += " NOT NULL"
+        if col["dflt_value"] is not None:
+            line += f" DEFAULT {col['dflt_value']}"
+        parts.append(line)
+    parts.append("FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL")
+    parts.append(
+        "FOREIGN KEY (batch_id) REFERENCES outbound_batches(id) ON DELETE CASCADE"
+    )
+    colnames = ", ".join(c["name"] for c in info)
+    # PRAGMA foreign_keys is ignored inside a transaction; commit first.
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(f"CREATE TABLE shipments__new ({', '.join(parts)})")
+    conn.execute(
+        f"INSERT INTO shipments__new ({colnames}) SELECT {colnames} FROM shipments"
+    )
+    conn.execute("DROP TABLE shipments")
+    conn.execute("ALTER TABLE shipments__new RENAME TO shipments")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shipments_status ON shipments(status)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_shipments_batch ON shipments(batch_id)"
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
 def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
@@ -260,13 +316,14 @@ def init_db() -> None:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 direction TEXT NOT NULL DEFAULT 'inbound',
                 carrier TEXT NOT NULL DEFAULT 'other',
-                tracking_no TEXT NOT NULL UNIQUE,
+                tracking_no TEXT NOT NULL,
                 shipped_at TEXT NOT NULL,
                 delivered_at TEXT,
                 status TEXT NOT NULL DEFAULT 'shipped',
                 order_id INTEGER,
                 batch_id INTEGER,
                 box_no INTEGER,
+                note TEXT NOT NULL DEFAULT '',
                 FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
                 FOREIGN KEY (batch_id) REFERENCES outbound_batches(id) ON DELETE CASCADE
             );
@@ -399,6 +456,14 @@ def init_db() -> None:
         _ensure_column(conn, "shipments", "order_id", "INTEGER")
         _ensure_column(conn, "shipments", "batch_id", "INTEGER")
         _ensure_column(conn, "shipments", "box_no", "INTEGER")
+        _ensure_column(conn, "shipments", "note", "TEXT NOT NULL DEFAULT ''")
+        _ensure_column(conn, "shipments", "net_weight", "REAL")
+        _ensure_column(conn, "shipments", "gross_weight", "REAL")
+        _ensure_column(conn, "shipments", "length_cm", "REAL")
+        _ensure_column(conn, "shipments", "width_cm", "REAL")
+        _ensure_column(conn, "shipments", "height_cm", "REAL")
+        _ensure_column(conn, "outbound_batches", "invoice_ship_date", "TEXT")
+        _drop_shipments_tracking_unique(conn)
 
         if _table_exists(conn, "items"):
             _migrate_items_to_orders(conn)

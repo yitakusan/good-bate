@@ -42,7 +42,7 @@
 | 订单 + 明细 | 一笔注文番号下多行 SKU；状态以订单为准（由明细最慢状态汇总） |
 | 五段状态 | 已下单 → 已发往仓库 → 在库 → 已发往用户 → 已签收；也可取消 |
 | 下单汇率 / 财务 | 一单一汇率（手填，不实时查）；商品与订单运费同汇率折算 CNY；出库批次锁定货款应收；国际运费独立汇率；按批次登记已收/未收；财务页可看本月下单与本月出库汇总 |
-| 发货费用明细 | 出库批次可导出 Excel（含箱号、**订单号**、品名、合计 JPY、下单汇率、合计 CNY 及运费汇总区） |
+| 发货费用明细 | 出库批次可导出 Excel（主表含箱号、**订单号**、品名、合计 JPY / CNY；子表 **对应订单** 按箱列出订单号） |
 | 抓取批量导入 | 粘贴链接单批抓取后勾选并填数量导入；同注文番号归入同一订单 |
 | 顾客申请下单 | 公开页 `/apply`（订单申请）：抓取导入同款批量清单 → 勾选提交；列表看进度；后台「申请单」确认后可选写入库存（可填下单汇率） |
 | 进库 | 单订单维度：选一笔订单的明细行，登记一个进库包裹；确认到仓后在库 |
@@ -201,7 +201,10 @@ stop.bat
 | GET | `/api/shipments/{id}` | 包含官方 `tracking_url`（可用时） |
 | POST | `/api/shipments/{id}/confirm` | 按包裹方向确认到仓或签收 |
 | GET/POST | `/api/outbound-batches` | 出库批次列表 / 新建（创建时锁定货款应收） |
+| PUT | `/api/outbound-batches/{id}` | 未签收前编辑批次（箱/商品/数量） |
 | PATCH | `/api/outbound-batches/{id}/finance` | 更新国际运费或已收款 |
+| GET | `/api/outbound-batches/{id}/inv.xlsx` | 导出 INV 发货单 |
+| POST | `/api/outbound-batches/preview-inv.xlsx` | 创建前按草稿预览导出 INV |
 | GET | `/api/outbound-batches/{id}/fee-detail.xlsx` | 导出发货费用明细 Excel |
 | GET | `/api/finance/summary` | 财务月汇总；参数 `month`（YYYY-MM） |
 | GET | `/api/action-logs` | 操作日志；参数 `limit` |

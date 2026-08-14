@@ -55,6 +55,8 @@ from app.models import (
     OutboundBatchCreate,
     OutboundBatchFinanceUpdate,
     OutboundBatchOut,
+    OutboundBatchUpdate,
+    OutboundInvPreview,
     RegisterCustomerIn,
     ScrapeRequest,
     ScrapeResult,
@@ -84,7 +86,7 @@ from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
-APP_VERSION = "0.9.5"
+APP_VERSION = "0.9.14"
 
 OPENAPI_TAGS = [
     {"name": "系统", "description": "健康检查、元信息与 Cloudflare 隧道"},
@@ -931,6 +933,7 @@ def create_outbound_batch(
         freight_exchange_rate=payload.freight_exchange_rate,
         freight_unit_price_jpy=payload.freight_unit_price_jpy,
         chargeable_weight=payload.chargeable_weight,
+        invoice_ship_date=payload.invoice_ship_date,
     )
 
 
@@ -943,6 +946,28 @@ def create_outbound_batch(
 def get_outbound_batch(batch_id: int, _: dict = Depends(require_staff)) -> dict:
     """按 ID 获取出库批次。"""
     return outbound_svc.get_batch(batch_id)
+
+
+@app.put(
+    "/api/outbound-batches/{batch_id}",
+    response_model=OutboundBatchOut,
+    tags=["出库"],
+    summary="编辑出库批次",
+)
+def update_outbound_batch(
+    batch_id: int,
+    payload: OutboundBatchUpdate,
+    _: dict = Depends(require_warehouse),
+) -> dict:
+    """未签收前可改箱信息、商品归属与数量，并重算货款应收。"""
+    return outbound_svc.update_batch(
+        batch_id,
+        boxes=[b.model_dump() for b in payload.boxes],
+        note=payload.note,
+        allow_missing_barcode=payload.allow_missing_barcode,
+        missing_barcode_note=payload.missing_barcode_note,
+        invoice_ship_date=payload.invoice_ship_date,
+    )
 
 
 @app.patch(
@@ -973,6 +998,44 @@ def export_outbound_fee_detail(
     """导出发货费用明细（含订单号、下单汇率、合计CNY）。"""
     content = outbound_svc.export_fee_detail_xlsx(batch_id)
     filename = f"fee-detail-batch-{batch_id}.xlsx"
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.get(
+    "/api/outbound-batches/{batch_id}/inv.xlsx",
+    tags=["出库"],
+    summary="导出 INV 发货单",
+)
+def export_outbound_inv(
+    batch_id: int, _: dict = Depends(require_staff)
+) -> Response:
+    """导出商业发票 / INV 发货单（基于固定双 Sheet 模板）。"""
+    content, filename = outbound_svc.export_inv_xlsx(batch_id)
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post(
+    "/api/outbound-batches/preview-inv.xlsx",
+    tags=["出库"],
+    summary="草稿预览导出 INV",
+)
+def export_outbound_inv_preview(
+    payload: OutboundInvPreview, _: dict = Depends(require_warehouse)
+) -> Response:
+    """创建出库批次前，按当前分箱草稿导出 INV 预览。"""
+    content, filename = outbound_svc.export_inv_preview_xlsx(payload.model_dump())
     return Response(
         content=content,
         media_type=(

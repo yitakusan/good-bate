@@ -114,6 +114,12 @@ export interface OutboundBox {
   status: ShipmentStatus;
   shipped_at: string;
   delivered_at: string | null;
+  note?: string;
+  net_weight?: number | null;
+  gross_weight?: number | null;
+  length_cm?: number | null;
+  width_cm?: number | null;
+  height_cm?: number | null;
   items: ShipmentItem[];
   order_groups: OrderGroupInBox[];
 }
@@ -139,6 +145,7 @@ export interface OutboundBatch {
   amount_unreceived_cny: number | null;
   payment_status: PaymentStatus;
   payment_note: string;
+  invoice_ship_date?: string | null;
 }
 
 export interface FinanceMonthBucket {
@@ -796,16 +803,50 @@ export function createOutboundBatch(payload: {
     box_no?: number;
     carrier: Carrier;
     tracking_no: string;
+    note?: string;
     item_ids: number[];
+    net_weight?: number | null;
+    gross_weight?: number | null;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
   }[];
   allow_missing_barcode?: boolean;
   missing_barcode_note?: string;
   freight_exchange_rate?: number | null;
   freight_unit_price_jpy?: number | null;
   chargeable_weight?: number | null;
+  invoice_ship_date?: string | null;
 }) {
   return request<OutboundBatch>("/api/outbound-batches", {
     method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateOutboundBatch(
+  id: number,
+  payload: {
+    note?: string | null;
+    boxes: {
+      box_no: number;
+      carrier: Carrier;
+      tracking_no: string;
+      note?: string;
+      items: { item_id: number; qty?: number }[];
+      net_weight?: number | null;
+      gross_weight?: number | null;
+      length_cm?: number | null;
+      width_cm?: number | null;
+      height_cm?: number | null;
+    }[];
+    allow_missing_barcode?: boolean;
+    missing_barcode_note?: string;
+    invoice_ship_date?: string | null;
+  },
+) {
+  return request<OutboundBatch>(`/api/outbound-batches/${id}`, {
+    method: "PUT",
     body: JSON.stringify(payload),
   });
 }
@@ -824,6 +865,7 @@ export function updateOutboundBatchFinance(
     chargeable_weight?: number | null;
     amount_received_cny?: number | null;
     payment_note?: string;
+    invoice_ship_date?: string | null;
   },
 ) {
   return request<OutboundBatch>(`/api/outbound-batches/${id}/finance`, {
@@ -854,6 +896,121 @@ export function downloadOutboundFeeDetail(id: number) {
     a.remove();
     URL.revokeObjectURL(url);
   });
+}
+
+function detailFromErrorBody(text: string, fallback: string): string {
+  const raw = (text || "").trim();
+  if (!raw) return fallback;
+  try {
+    const body = JSON.parse(raw) as { detail?: unknown };
+    if (typeof body.detail === "string" && body.detail.trim()) {
+      return body.detail;
+    }
+    if (Array.isArray(body.detail)) {
+      const parts = body.detail
+        .map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object" && "msg" in item) {
+            return String((item as { msg: unknown }).msg);
+          }
+          return "";
+        })
+        .filter(Boolean);
+      if (parts.length) return parts.join("；");
+    }
+    if (body.detail != null) return String(body.detail);
+  } catch {
+    /* not JSON */
+  }
+  return raw;
+}
+
+function filenameFromContentDisposition(
+  header: string | null,
+  fallback: string,
+): string {
+  if (!header) return fallback;
+  const utf8 = /filename\*=UTF-8''([^;]+)/i.exec(header);
+  if (utf8?.[1]) {
+    try {
+      return decodeURIComponent(utf8[1].trim());
+    } catch {
+      /* ignore */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(header);
+  if (plain?.[1]) return plain[1].trim();
+  return fallback;
+}
+
+async function downloadXlsxBlob(
+  path: string,
+  filename: string,
+  init?: RequestInit,
+) {
+  const headers: Record<string, string> = {
+    ...(init?.headers as Record<string, string> | undefined),
+  };
+  const adminToken = getAdminToken();
+  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  const res = await fetch(path, {
+    ...init,
+    headers,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(detailFromErrorBody(text, res.statusText));
+  }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filenameFromContentDisposition(
+    res.headers.get("Content-Disposition"),
+    filename,
+  );
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function downloadOutboundInv(id: number) {
+  return downloadXlsxBlob(
+    `/api/outbound-batches/${id}/inv.xlsx`,
+    `INV-batch-${id}.xlsx`,
+  );
+}
+
+export function downloadOutboundInvPreview(payload: {
+  note?: string;
+  boxes: {
+    box_no?: number;
+    carrier: Carrier;
+    tracking_no: string;
+    note?: string;
+    item_ids: number[];
+    net_weight?: number | null;
+    gross_weight?: number | null;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
+  }[];
+  freight_exchange_rate?: number | null;
+  freight_unit_price_jpy?: number | null;
+  chargeable_weight?: number | null;
+  invoice_ship_date?: string | null;
+}) {
+  return downloadXlsxBlob(
+    "/api/outbound-batches/preview-inv.xlsx",
+    "INV-draft-preview.xlsx",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
 }
 
 export function fetchFinanceSummary(month?: string) {

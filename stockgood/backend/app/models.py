@@ -250,7 +250,13 @@ class OutboundBoxCreate(BaseModel):
     box_no: Optional[int] = Field(default=None, ge=1)
     carrier: Carrier = "other"
     tracking_no: str = Field(min_length=1)
+    note: str = ""
     item_ids: list[int] = Field(min_length=1)
+    net_weight: Optional[float] = Field(default=None, ge=0)
+    gross_weight: Optional[float] = Field(default=None, ge=0)
+    length_cm: Optional[float] = Field(default=None, ge=0)
+    width_cm: Optional[float] = Field(default=None, ge=0)
+    height_cm: Optional[float] = Field(default=None, ge=0)
 
 
 class OutboundBatchCreate(BaseModel):
@@ -261,6 +267,7 @@ class OutboundBatchCreate(BaseModel):
     freight_exchange_rate: Optional[float] = Field(default=None, gt=0)
     freight_unit_price_jpy: Optional[float] = Field(default=None, ge=0)
     chargeable_weight: Optional[float] = Field(default=None, ge=0)
+    invoice_ship_date: Optional[str] = None
 
 
 class OutboundBatchFinanceUpdate(BaseModel):
@@ -269,6 +276,42 @@ class OutboundBatchFinanceUpdate(BaseModel):
     chargeable_weight: Optional[float] = Field(default=None, ge=0)
     amount_received_cny: Optional[float] = Field(default=None, ge=0)
     payment_note: Optional[str] = None
+    invoice_ship_date: Optional[str] = None
+
+
+class OutboundBoxItemUpdate(BaseModel):
+    item_id: int = Field(ge=1)
+    qty: Optional[int] = Field(default=None, ge=1)
+
+
+class OutboundBoxUpdate(BaseModel):
+    box_no: int = Field(ge=1)
+    carrier: Carrier = "other"
+    tracking_no: str = Field(min_length=1)
+    note: str = ""
+    items: list[OutboundBoxItemUpdate] = Field(min_length=1)
+    net_weight: Optional[float] = Field(default=None, ge=0)
+    gross_weight: Optional[float] = Field(default=None, ge=0)
+    length_cm: Optional[float] = Field(default=None, ge=0)
+    width_cm: Optional[float] = Field(default=None, ge=0)
+    height_cm: Optional[float] = Field(default=None, ge=0)
+
+
+class OutboundBatchUpdate(BaseModel):
+    note: Optional[str] = None
+    boxes: list[OutboundBoxUpdate] = Field(min_length=1)
+    allow_missing_barcode: bool = False
+    missing_barcode_note: str = ""
+    invoice_ship_date: Optional[str] = None
+
+
+class OutboundInvPreview(BaseModel):
+    note: str = ""
+    boxes: list[OutboundBoxCreate] = Field(min_length=1)
+    freight_exchange_rate: Optional[float] = Field(default=None, gt=0)
+    freight_unit_price_jpy: Optional[float] = Field(default=None, ge=0)
+    chargeable_weight: Optional[float] = Field(default=None, ge=0)
+    invoice_ship_date: Optional[str] = None
 
 
 class OutboundBoxOut(BaseModel):
@@ -281,6 +324,12 @@ class OutboundBoxOut(BaseModel):
     status: ShipmentStatus
     shipped_at: str
     delivered_at: Optional[str] = None
+    note: str = ""
+    net_weight: Optional[float] = None
+    gross_weight: Optional[float] = None
+    length_cm: Optional[float] = None
+    width_cm: Optional[float] = None
+    height_cm: Optional[float] = None
     items: list[ShipmentItemOut] = []
     order_groups: list[OrderGroupOut] = []
 
@@ -304,6 +353,7 @@ class OutboundBatchOut(BaseModel):
     amount_unreceived_cny: Optional[float] = None
     payment_status: Literal["unpaid", "partial", "paid"] = "unpaid"
     payment_note: str = ""
+    invoice_ship_date: Optional[str] = None
 
 
 class FinanceMonthBucket(BaseModel):
