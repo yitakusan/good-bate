@@ -1,5 +1,13 @@
 """Local Cloudflare quick-tunnel status + start/stop for the UI."""
 
+# ============================================================
+# FEATURE: TUNNEL
+#
+# [接口] /api/tunnel*
+# [脚本] scripts/run-tunnel.ps1
+# [代码索引] docs/CODE_INDEX.md#feature-tunnel
+# ============================================================
+
 from __future__ import annotations
 
 import os

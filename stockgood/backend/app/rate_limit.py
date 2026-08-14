@@ -1,5 +1,12 @@
 """In-memory rate limit for public scrape / submit endpoints."""
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] 公开接口限流
+# [使用功能] FEATURE: ORDER_REQUEST
+# ============================================================
+
 from __future__ import annotations
 
 import time

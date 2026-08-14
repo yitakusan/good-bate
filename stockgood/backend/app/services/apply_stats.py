@@ -1,5 +1,13 @@
 """Customer apply / order-request analytics for staff reports."""
 
+# ============================================================
+# FEATURE: APPLY_STATS
+#
+# [接口] GET /api/reports/apply
+# [数据库] order_requests（按创建时间）
+# [代码索引] docs/CODE_INDEX.md#feature-apply_stats
+# ============================================================
+
 from __future__ import annotations
 
 import re

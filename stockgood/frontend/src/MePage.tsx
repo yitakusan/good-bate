@@ -1,3 +1,24 @@
+// ============================================================
+// FEATURE: CUSTOMER_PORTAL
+//
+// [功能] 客户个人门户（路由 /me）
+// [用途] 查看自己的申请、确认定金
+//
+// [页面]
+// frontend/src/MePage.tsx
+//
+// [前端 API]
+// frontend/src/api.ts → fetchMe / fetchMyOrderRequests / confirmDeposit
+//
+// [后端接口]
+// GET  /api/auth/me
+// GET  /api/me/order-requests
+// POST /api/me/order-requests/{code}/confirm-deposit
+//
+// [后端] backend/app/services/order_requests.py
+// [数据库] order_requests, users, sessions
+// [代码索引] docs/CODE_INDEX.md#feature-customer_portal
+// ============================================================
 import { useEffect, useState } from "react";
 
 import AuthPanel from "./AuthPanel";

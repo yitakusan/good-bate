@@ -3,6 +3,13 @@ from __future__ import annotations
 from typing import Literal, Optional
 from urllib.parse import quote
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] Yamato / 佐川官方查询 URL
+# [使用功能] FEATURE: INBOUND / OUTBOUND_BATCH
+# ============================================================
+
 Carrier = Literal["yamato", "sagawa", "other"]
 
 

@@ -4,6 +4,12 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] 全部 API 的 Pydantic 请求/响应模型
+# [代码索引] docs/CODE_INDEX.md#shared-modules
+# ============================================================
 
 ItemStatus = Literal[
     "ordered",
@@ -20,6 +26,11 @@ Carrier = Literal["yamato", "sagawa", "other"]
 ExpectedShipPeriod = Literal["early", "mid", "late"]
 
 
+# ============================================================
+# FEATURE: ORDER
+# [数据模型] LineCreate / OrderCreate / ItemCreate / ItemOut / StatsOut
+# [数据库] orders, items
+# ============================================================
 class LineCreate(BaseModel):
     name: str = Field(min_length=1)
     shop: str = ""
@@ -160,6 +171,9 @@ class ItemOut(LineOut):
     order_image_url: str = ""
 
 
+# ============================================================
+# FEATURE: ORDER_IMPORT
+# ============================================================
 class ScrapeRequest(BaseModel):
     url: str = ""
     html: Optional[str] = None
@@ -198,6 +212,9 @@ class ItemBatchCreate(BaseModel):
     items: list[ItemCreate] = Field(min_length=1)
 
 
+# ============================================================
+# FEATURE: INBOUND
+# ============================================================
 class InboundCreate(BaseModel):
     tracking_no: str = ""
     carrier: Carrier = "other"
@@ -246,6 +263,9 @@ class ShipmentOut(BaseModel):
     order_groups: list[OrderGroupOut] = []
 
 
+# ============================================================
+# FEATURE: OUTBOUND_BATCH
+# ============================================================
 class OutboundBoxCreate(BaseModel):
     box_no: Optional[int] = Field(default=None, ge=1)
     carrier: Carrier = "other"
@@ -270,6 +290,9 @@ class OutboundBatchCreate(BaseModel):
     invoice_ship_date: Optional[str] = None
 
 
+# ============================================================
+# FEATURE: FINANCE
+# ============================================================
 class OutboundBatchFinanceUpdate(BaseModel):
     freight_exchange_rate: Optional[float] = Field(default=None, gt=0)
     freight_unit_price_jpy: Optional[float] = Field(default=None, ge=0)
@@ -305,6 +328,9 @@ class OutboundBatchUpdate(BaseModel):
     invoice_ship_date: Optional[str] = None
 
 
+# ============================================================
+# FEATURE: INV_EXPORT
+# ============================================================
 class OutboundInvPreview(BaseModel):
     note: str = ""
     boxes: list[OutboundBoxCreate] = Field(min_length=1)
@@ -383,6 +409,9 @@ class FinanceSummaryOut(BaseModel):
     outbound: FinanceOutboundBucket
 
 
+# ============================================================
+# FEATURE: INVENTORY
+# ============================================================
 class StockBoxLineOut(BaseModel):
     id: int
     order_id: int
@@ -463,6 +492,9 @@ class StatsOut(BaseModel):
     orders_total: int = 0
 
 
+# ============================================================
+# FEATURE: ACTION_LOG
+# ============================================================
 class ActionLogOut(BaseModel):
     id: int
     action_type: str
@@ -478,6 +510,9 @@ class ActionLogOut(BaseModel):
 UserRole = Literal["admin", "warehouse", "finance", "customer"]
 
 
+# ============================================================
+# FEATURE: AUTH / USER_MANAGEMENT
+# ============================================================
 class UserOut(BaseModel):
     id: int
     email: str
@@ -520,6 +555,9 @@ OrderRequestStatus = Literal["pending_payment", "submitted", "ordered", "rejecte
 DEPOSIT_RATE_DEFAULT = 0.3
 
 
+# ============================================================
+# FEATURE: ORDER_REQUEST / CUSTOMER_PORTAL
+# ============================================================
 class OrderRequestCreate(BaseModel):
     name: str = Field(min_length=1)
     shop: str = ""

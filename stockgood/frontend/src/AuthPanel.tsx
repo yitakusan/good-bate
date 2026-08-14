@@ -1,3 +1,26 @@
+// ============================================================
+// FEATURE: AUTH
+//
+// [功能] 登录 / 客户注册表单
+// [用途] 员工主界面、/apply、/me 共用
+//
+// [页面]
+// frontend/src/AuthPanel.tsx
+// frontend/src/App.tsx
+// frontend/src/ApplyPage.tsx
+// frontend/src/MePage.tsx
+//
+// [前端 API]
+// frontend/src/api.ts → login() / registerCustomer()
+//
+// [后端接口]
+// POST /api/auth/login
+// POST /api/auth/register
+//
+// [后端] backend/app/auth.py
+// [数据库] users, sessions
+// [代码索引] docs/CODE_INDEX.md#feature-auth
+// ============================================================
 import { FormEvent, useState } from "react";
 
 import {

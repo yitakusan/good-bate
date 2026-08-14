@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+# ============================================================
+# FEATURE: ORDER_IMPORT
+#
+# [用途] 员工/顾客抓取引擎入口：scrape_url / scrape_html_document
+# [接口] POST /api/scrape  POST /api/public/scrape
+# [调用] backend/app/main.py
+# [代码索引] docs/CODE_INDEX.md#feature-order_import
+# ============================================================
 import asyncio
 import re
 from typing import Any, Optional

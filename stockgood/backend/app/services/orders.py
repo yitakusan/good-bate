@@ -14,6 +14,15 @@ from app.services.order_status import sync_order_status
 from app.settings import get_settings
 from app.tracking_links import tracking_url
 
+# ============================================================
+# FEATURE: ORDER
+#
+# [用途] 库存订单 CRUD、状态统计、店铺列表
+# [接口] /api/orders*  GET /api/stats  GET /api/shops
+# [数据库] orders, items
+# [代码索引] docs/CODE_INDEX.md#feature-order
+# ============================================================
+
 
 def _product_kind_detector() -> ProductKindNormalizer:
     return ProductKindNormalizer(get_settings().product_kind_path)

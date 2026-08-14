@@ -11,6 +11,15 @@ from app.services import action_log
 from app.services.order_status import group_items_by_order, sync_order_status
 from app.tracking_links import tracking_url
 
+# ============================================================
+# FEATURE: INBOUND
+#
+# [用途] 进库运单创建与确认到仓
+# [接口] POST /api/orders/{id}/inbound  /api/shipments*
+# [数据库] shipments, shipment_items, items.status
+# [代码索引] docs/CODE_INDEX.md#feature-inbound
+# ============================================================
+
 # SQLite UNIQUE on tracking_no cannot hold multiple empty strings.
 _NO_TRACKING_PREFIX = "__none__"
 
@@ -84,6 +93,11 @@ def get_shipment(shipment_id: int) -> dict[str, Any]:
         return _shipment_with_items(conn, shipment_id)
 
 
+# ============================================================
+# FEATURE: INBOUND
+# [业务逻辑] create_inbound_for_order — 按订单进库
+# [接口] POST /api/orders/{id}/inbound
+# ============================================================
 def create_inbound_for_order(
     order_id: int,
     tracking_no: str,

@@ -15,6 +15,15 @@ from app.services.order_status import sync_order_status
 from app.services.shipments import _shipment_with_items
 from app.services.stock_boxes import release_orders as release_stock_box_orders
 
+# ============================================================
+# FEATURE: OUTBOUND_BATCH
+#
+# [用途] 出库批次创建/编辑/签收；同文件含 INV_EXPORT / FEE_DETAIL / FINANCE 导出与财务
+# [接口] /api/outbound-batches*
+# [数据库] outbound_batches, shipments, shipment_items, items
+# [代码索引] docs/CODE_INDEX.md#feature-outbound_batch
+# ============================================================
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -230,6 +239,11 @@ def _lock_receivables(
     }
 
 
+# ============================================================
+# FEATURE: OUTBOUND_BATCH
+# [业务逻辑] create_batch — 创建出库批次并锁定货款应收
+# [接口] POST /api/outbound-batches
+# ============================================================
 def create_batch(
     boxes: list[dict[str, Any]],
     note: str = "",
@@ -526,6 +540,11 @@ def create_batch(
         return _batch_out(conn, batch_id)
 
 
+# ============================================================
+# FEATURE: FINANCE
+# [业务逻辑] update_finance — 国际运费 / 已收款
+# [接口] PATCH /api/outbound-batches/{id}/finance
+# ============================================================
 def update_finance(batch_id: int, payload: dict[str, Any]) -> dict[str, Any]:
     """Update international freight fields and/or amount_received_cny."""
     data = {k: v for k, v in payload.items() if v is not None or k in ("payment_note",)}
@@ -1031,6 +1050,12 @@ def confirm_batch(batch_id: int) -> dict[str, Any]:
         return _batch_out(conn, batch_id)
 
 
+# ============================================================
+# FEATURE: FEE_DETAIL
+# [业务逻辑] export_fee_detail_xlsx
+# [接口] GET /api/outbound-batches/{id}/fee-detail.xlsx
+# [模板] backend/data/templates/fee_detail.xlsx
+# ============================================================
 def export_fee_detail_xlsx(batch_id: int) -> bytes:
     """Export 发货费用明细 Excel (template: 发货费用明细 + 对应订单)."""
     template = DATA_DIR / "templates" / "fee_detail.xlsx"
@@ -1235,6 +1260,11 @@ def _require_box_packing(box_no: int, box: dict[str, Any]) -> None:
         )
 
 
+# ============================================================
+# FEATURE: INV_EXPORT
+# [业务逻辑] export_inv_xlsx / export_inv_preview_xlsx
+# [接口] GET .../inv.xlsx  POST .../preview-inv.xlsx
+# ============================================================
 def export_inv_xlsx(batch_id: int) -> tuple[bytes, str]:
     """Export INV from fixed FIT dual-sheet template. Returns (bytes, filename)."""
     from app.services.inv_template import (

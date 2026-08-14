@@ -1,3 +1,14 @@
+// ============================================================
+// SHARED MODULE（员工主界面）
+//
+// [用途] 单页多 Tab：订单 / 财务 / 统计 / 申请单 / 抓取 / 进库 / 库存 / 出库 / 日志 / 用户
+// [页面] frontend/src/App.tsx（无独立 *Page.tsx 出库页）
+// [前端 API] frontend/src/api.ts
+// [后端] backend/app/main.py
+// [代码索引] docs/CODE_INDEX.md
+//
+// 各 Tab 用 FEATURE: 注释跳转（搜索 FEATURE: OUTBOUND_BATCH 等）
+// ============================================================
 import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import AuthPanel from "./AuthPanel";
@@ -2305,6 +2316,7 @@ export default function App() {
           <h1>Stockgood{meta?.is_shadow ? " · 测试" : ""}</h1>
           <p className="brand-flow">订单 → 进库 → 库存 → 出库 → 签收</p>
           <div className="tunnel-panel">
+            {/* FEATURE: TUNNEL — 页头 Cloudflare 临时隧道开关；docs/CODE_INDEX.md#feature-tunnel */}
             <div className="tunnel-controls" aria-label="隧道开关">
               <button
                 type="button"
@@ -2423,6 +2435,7 @@ export default function App() {
           authUser.role === "finance")
       ) &&
       !getAdminToken() ? (
+        // FEATURE: AUTH — 员工主界面登录（AuthPanel）
         <AuthPanel
           title="员工登录"
           onSuccess={(u) => {
@@ -2556,6 +2569,13 @@ export default function App() {
       {message && <div className="ok-msg">{message}</div>}
       {loading && <div className="muted">加载中…</div>}
 
+      {/* ============================================================
+          FEATURE: ORDER
+          [功能] 库存订单列表 / 搜索 / 新建 / 编辑
+          [前端 API] fetchOrders / createOrder / updateOrder / fetchItems / updateItem
+          [后端] GET|POST /api/orders  PATCH /api/orders/{id}
+          [代码索引] docs/CODE_INDEX.md#feature-order
+          ============================================================ */}
       {tab === "orders" && (
         <section className="panel">
           <form className="toolbar" onSubmit={onSearch}>
@@ -2827,6 +2847,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: FINANCE
+          [功能] 财务月汇总（本月下单 / 本月出库）
+          [前端 API] fetchFinanceSummary
+          [后端] GET /api/finance/summary
+          [代码索引] docs/CODE_INDEX.md#feature-finance
+          ============================================================ */}
       {tab === "finance" && (
         <section className="panel">
           <p className="muted">
@@ -2910,6 +2937,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: APPLY_STATS
+          [功能] 申请单日/月统计
+          [前端 API] fetchApplyReport
+          [后端] GET /api/reports/apply
+          [代码索引] docs/CODE_INDEX.md#feature-apply_stats
+          ============================================================ */}
       {tab === "reports" && (
         <section className="panel">
           <p className="muted">
@@ -3035,6 +3069,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: ORDER_REQUEST
+          [功能] 员工确认 / 拒绝顾客申请
+          [前端 API] fetchOrderRequests / confirmOrderRequest / rejectOrderRequest / staffConfirmDeposit
+          [后端] /api/order-requests*
+          [代码索引] docs/CODE_INDEX.md#feature-order_request
+          ============================================================ */}
       {tab === "requests" && (
         <section className="panel">
           <p className="muted">
@@ -3240,6 +3281,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: ORDER_IMPORT
+          [功能] 粘贴 URL 抓取预览后批量导入货品
+          [前端 API] scrapeUrl / createItemsBatch
+          [后端] POST /api/scrape  POST /api/items/batch
+          [代码索引] docs/CODE_INDEX.md#feature-order_import
+          ============================================================ */}
       {tab === "scrape" && (
         <section className="panel">
           <p className="muted">
@@ -3364,6 +3412,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: INBOUND
+          [功能] 按订单进库、确认到仓
+          [前端 API] createOrderInbound / fetchShipments / confirmShipment
+          [后端] POST /api/orders/{id}/inbound  POST /api/shipments/{id}/confirm
+          [代码索引] docs/CODE_INDEX.md#feature-inbound
+          ============================================================ */}
       {tab === "inbound" && (
         <section className="panel">
           <p className="muted">
@@ -3504,6 +3559,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: INVENTORY
+          [功能] 在库合箱（不改货品状态）
+          [前端 API] fetchStockBoxes / createStockBox / combineStockBox / ...
+          [后端] /api/stock-boxes*
+          [代码索引] docs/CODE_INDEX.md#feature-inventory
+          ============================================================ */}
       {tab === "inventory" && (
         <section className="panel">
           <p className="muted">
@@ -3913,6 +3975,17 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: OUTBOUND_BATCH
+          [功能] 批次出库：分箱、共用运单、包装、创建/编辑/签收
+          同页按钮：
+            「导出 INV」→ FEATURE: INV_EXPORT
+            「费用明细 Excel」→ FEATURE: FEE_DETAIL
+          [前端 API] createOutboundBatch / updateOutboundBatch / confirmOutboundBatch
+          [后端] /api/outbound-batches*
+          [数据库] outbound_batches, shipments, shipment_items
+          [代码索引] docs/CODE_INDEX.md#feature-outbound_batch
+          ============================================================ */}
       {tab === "outbound" && (
         <section className="panel">
           <p className="muted">勾选任一行会自动选择该订单全部在库行。一个批次可有多个箱子，每箱可混装多个订单。出库必须登记条形码；特殊情况可勾选并备注。</p>
@@ -4922,6 +4995,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: ACTION_LOG
+          [功能] 操作日志列表（撤回在页头）
+          [前端 API] fetchActionLogs / undoActionLog
+          [后端] /api/action-logs*
+          [代码索引] docs/CODE_INDEX.md#feature-action_log
+          ============================================================ */}
       {tab === "logs" && (
         <section className="panel">
           <p className="muted">仅可撤回最近一步且尚未被后续状态变更影响的操作。</p>
@@ -4933,6 +5013,13 @@ export default function App() {
         </section>
       )}
 
+      {/* ============================================================
+          FEATURE: USER_MANAGEMENT
+          [功能] 管理员创建/启用/停用账号
+          [前端 API] fetchUsers / createUser / setUserActive
+          [后端] GET|POST /api/users  PATCH /api/users/{id}/active
+          [代码索引] docs/CODE_INDEX.md#feature-user_management
+          ============================================================ */}
       {tab === "users" && authUser?.role === "admin" && (
         <section className="panel">
           <h3>用户管理</h3>

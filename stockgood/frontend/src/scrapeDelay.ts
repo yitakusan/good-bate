@@ -1,3 +1,9 @@
+// ============================================================
+// FEATURE: ORDER_IMPORT
+//
+// [用途] 批量抓取间隔（HMV / BicCamera 更长），被申请页与抓取 Tab 共用
+// [代码索引] docs/CODE_INDEX.md#feature-order_import
+// ============================================================
 const GENERAL_DELAY_MS = 350;
 const HMV_OR_BIC_DELAY_MS = 1_500;
 const FAILURE_EXTRA_DELAY_MS = 1_000;

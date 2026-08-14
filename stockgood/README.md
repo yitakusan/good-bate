@@ -51,6 +51,142 @@
 | 操作撤回 | 登记/批量导入、进出库、确认、取消等写入操作日志；可撤回最近一步 |
 | 预计发货 | 按「年月 + 可选上中下旬」管理；可一键查看本月（与财务「本月下单/出库」口径不同） |
 
+## 项目导航
+
+给人和 AI 的快速入口。
+
+| 文件 | 职责 |
+|---|---|
+| [`AGENTS.md`](AGENTS.md) | AI 如何工作、修改规则、新会话如何恢复上下文 |
+| [`README.md`](README.md) | 项目是什么、如何运行 |
+| [`docs/CODE_INDEX.md`](docs/CODE_INDEX.md) | FEATURE 对应哪些代码、接口、数据库、页面 |
+| [`docs/CHANGELOG_AI.md`](docs/CHANGELOG_AI.md) | 为什么这么改、当前开发状态、Session Handoff |
+
+产品版本记录仍是 [`CHANGELOG.md`](CHANGELOG.md)，与 `CHANGELOG_AI.md` 职责不同。
+
+本项目用 `FEATURE: XXXXX` 标记业务功能。修改某功能时：先查 FEATURE → 读 CODE_INDEX → 搜 CHANGELOG_AI 历史 → 只打开相关文件。
+
+### 项目结构
+
+```text
+frontend/          React + Vite 界面（端口 5174）
+backend/           FastAPI + SQLite（端口 8002）
+backend/app/       路由、模型、服务、抓取
+backend/data/      数据库、模板、备份（勿提交密钥）
+docs/              部署、产品规范、代码索引、AI 开发上下文
+scripts/           启停、备份、隧道、托盘
+deploy/            Docker / systemd
+```
+
+| 目录 / 文件 | 用途 |
+|---|---|
+| `frontend/src/App.tsx` | 员工主界面（多 Tab，无独立出库页文件） |
+| `frontend/src/ApplyPage.tsx` | 顾客申请 `/apply` |
+| `frontend/src/MePage.tsx` | 客户门户 `/me` |
+| `frontend/src/api.ts` | 前端全部 HTTP 封装 |
+| `backend/app/main.py` | FastAPI 全部 endpoint |
+| `backend/app/services/` | 业务逻辑 |
+| `backend/app/database.py` | SQLite 连接与建表 |
+| `backend/app/models.py` | Pydantic 请求/响应 |
+
+### 功能总览
+
+| FEATURE | 功能 | 前端入口 | 后端入口 | 主要接口 | 数据库 |
+|---|---|---|---|---|---|
+| AUTH | 登录/注册/会话 | `AuthPanel.tsx` | `auth.py` | `/api/auth/*` | `users`, `sessions` |
+| USER_MANAGEMENT | 用户管理 | `App.tsx` Tab 用户 | `main.py` + `auth.py` | `/api/users*` | `users` |
+| CUSTOMER_PORTAL | 客户门户 | `/me` `MePage.tsx` | `order_requests.py` | `/api/me/order-requests*` | `order_requests` |
+| ORDER | 库存订单 | `App.tsx` Tab 订单 | `orders.py` / `items.py` | `/api/orders*`, `/api/items*` | `orders`, `items` |
+| ORDER_IMPORT | 抓取导入 | `App.tsx` Tab 抓取 | `scrapers/preview.py` | `POST /api/scrape` | `orders`, `items` |
+| ORDER_REQUEST | 顾客申请 | `/apply`；Tab 申请单 | `order_requests.py` | `/api/public/order-requests*` | `order_requests` |
+| INBOUND | 进库 | `App.tsx` Tab 进库 | `shipments.py` | `POST /api/orders/{id}/inbound` | `shipments` |
+| INVENTORY | 库存合箱 | `App.tsx` Tab 库存 | `stock_boxes.py` | `/api/stock-boxes*` | `stock_boxes` |
+| OUTBOUND_BATCH | 批次出库 | `App.tsx` Tab 出库 | `outbound_batches.py` | `/api/outbound-batches*` | `outbound_batches` |
+| INV_EXPORT | 导出 INV | 出库「导出 INV」 | `inv_template.py` | `.../inv.xlsx` | 只读批次/箱 |
+| FEE_DETAIL | 费用明细 Excel | 出库「费用明细 Excel」 | `outbound_batches.py` | `.../fee-detail.xlsx` | 只读批次 |
+| FINANCE | 财务汇总 | Tab 财务；出库运费 | `finance.py` | `/api/finance/summary` | 订单汇率、批次财务列 |
+| APPLY_STATS | 申请统计 | Tab 统计 | `apply_stats.py` | `GET /api/reports/apply` | `order_requests` |
+| ACTION_LOG | 操作撤回 | 顶部撤回条；Tab 日志 | `action_log.py` | `/api/action-logs*` | `action_logs` |
+| TUNNEL | Cloudflare 隧道 | 页头隧道按钮 | `tunnel_status.py` | `/api/tunnel*` | 无 |
+| SYSTEM | 健康/元信息/种类 | 启动时 `fetchMeta` | `main.py` | `/api/health`, `/api/meta` | 无 |
+
+完整表与调用链：[`docs/CODE_INDEX.md`](docs/CODE_INDEX.md)。
+
+### 前端页面索引
+
+| 页面/功能 | FEATURE | 文件 | API |
+|---|---|---|---|
+| 员工主界面 | 多个 Tab | `frontend/src/App.tsx` | 见各 FEATURE |
+| 登录框 | AUTH | `frontend/src/AuthPanel.tsx` | `login`, `registerCustomer` |
+| 订单申请 `/apply` | ORDER_REQUEST | `frontend/src/ApplyPage.tsx` | `publicScrapeUrl`, `createOrderRequest` |
+| 客户门户 `/me` | CUSTOMER_PORTAL | `frontend/src/MePage.tsx` | `fetchMyOrderRequests`, `confirmDeposit` |
+| 路由分流 | SHARED | `frontend/src/main.tsx` | — |
+
+### 前端 API 索引
+
+封装集中在 `frontend/src/api.ts`。按 FEATURE 搜索函数名即可。常用：
+
+| API函数 | FEATURE | 后端接口 |
+|---|---|---|
+| `login` / `logout` / `fetchMe` | AUTH | `/api/auth/*` |
+| `fetchOrders` / `createOrder` | ORDER | `/api/orders` |
+| `scrapeUrl` / `createItemsBatch` | ORDER_IMPORT | `/api/scrape`, `/api/items/batch` |
+| `createOutboundBatch` | OUTBOUND_BATCH | `POST /api/outbound-batches` |
+| `downloadOutboundInv` | INV_EXPORT | `GET .../inv.xlsx` |
+| `downloadOutboundFeeDetail` | FEE_DETAIL | `GET .../fee-detail.xlsx` |
+
+### 后端接口索引
+
+完整 OpenAPI：http://localhost:8002/docs 。实现文件均为 `backend/app/main.py`，业务在 `backend/app/services/`。
+
+### 数据库索引
+
+表定义：`backend/app/database.py` `init_db()`。部分列由 `_ensure_column` 迁移补齐（如 `invoice_ship_date`、包装尺寸）。详见 CODE_INDEX「数据库索引」。
+
+### AI 快速使用方式
+
+需要修改某个功能时，优先：
+
+1. 查找 FEATURE
+2. 阅读 `docs/CODE_INDEX.md`
+3. 在 `docs/CHANGELOG_AI.md` 搜索同一 FEATURE 的历史
+4. 阅读对应前端/后端文件
+5. 检查相关接口和数据库
+6. 修改前确认影响范围
+
+新会话示例：
+
+```text
+这是新会话，请读取 AGENTS、CODE_INDEX 和 CHANGELOG_AI，然后继续上次未完成工作。
+```
+
+```text
+先看最近一次 Session Handoff，然后继续开发。
+```
+
+```text
+先恢复项目上下文，再处理 FEATURE: INV_EXPORT。
+```
+
+```text
+读取 FEATURE: INV_EXPORT 的全部相关代码。
+```
+
+```text
+修改 FEATURE: OUTBOUND_BATCH。
+先根据 docs/CODE_INDEX.md 确定影响范围，
+只读取和修改相关文件。
+```
+
+```text
+找到「出库 → 导出 INV」按钮从前端到数据库的完整调用链。
+```
+
+```text
+完成后做一次 Context Checkpoint。
+把这次重要设计决策记录进 CHANGELOG_AI。
+```
+
 ## 启动
 
 ### 安装依赖

@@ -18,6 +18,14 @@ from app.services.orders import (
     _resolve_product_kind,
 )
 
+# ============================================================
+# FEATURE: ORDER
+#
+# [用途] 货品列表/更新；批量导入见 FEATURE: ORDER_IMPORT
+# [接口] /api/items*
+# [代码索引] docs/CODE_INDEX.md#feature-order
+# ============================================================
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -118,6 +126,11 @@ def create_item(payload: ItemCreate) -> dict[str, Any]:
     return order["lines"][0]
 
 
+# ============================================================
+# FEATURE: ORDER_IMPORT
+# [业务逻辑] create_items_batch — 抓取导入写入订单/货品
+# [接口] POST /api/items/batch
+# ============================================================
 def create_items_batch(payloads: list[ItemCreate]) -> list[dict[str, Any]]:
     """Group by order_ref into orders; empty ref → one order each."""
     if not payloads:

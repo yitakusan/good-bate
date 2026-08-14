@@ -1,3 +1,26 @@
+// ============================================================
+// FEATURE: ORDER_REQUEST
+//
+// [功能] 顾客订单申请页（路由 /apply）
+// [用途] 登录后抓取商品、勾选提交；待付定金后确认付款
+//
+// [页面]
+// frontend/src/ApplyPage.tsx
+//
+// [前端 API]
+// frontend/src/api.ts → publicScrapeUrl / createOrderRequest /
+//   fetchPublicOrderRequests / confirmDeposit
+//
+// [后端接口]
+// POST /api/public/scrape
+// POST /api/public/order-requests
+// GET  /api/public/order-requests
+// POST /api/me/order-requests/{code}/confirm-deposit
+//
+// [后端] backend/app/services/order_requests.py
+// [数据库] order_requests
+// [代码索引] docs/CODE_INDEX.md#feature-order_request
+// ============================================================
 import { useEffect, useRef, useState } from "react";
 
 import {

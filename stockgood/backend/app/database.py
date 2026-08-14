@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] SQLite 连接、init_db 建表、列迁移
+# [使用功能] 全部写路径
+# [代码索引] docs/CODE_INDEX.md#shared-modules
+# ============================================================
 import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
@@ -235,9 +242,14 @@ def _migrate_items_to_orders(conn: sqlite3.Connection) -> None:
 
 
 def init_db() -> None:
+    # ============================================================
+    # SHARED MODULE — 建表
+    # 表与 FEATURE 对照见 docs/CODE_INDEX.md 数据库索引
+    # ============================================================
     with get_conn() as conn:
         conn.executescript(
             """
+            -- FEATURE: ORDER / FINANCE  库存订单头
             CREATE TABLE IF NOT EXISTS orders (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_ref TEXT NOT NULL DEFAULT '',
@@ -253,6 +265,7 @@ def init_db() -> None:
                 expected_ship_period TEXT
             );
 
+            -- FEATURE: ORDER / INBOUND / OUTBOUND_BATCH / INV_EXPORT  明细行
             CREATE TABLE IF NOT EXISTS items (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 order_id INTEGER,
@@ -278,6 +291,8 @@ def init_db() -> None:
                 FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
             );
 
+            -- FEATURE: OUTBOUND_BATCH / FINANCE / INV_EXPORT / FEE_DETAIL
+            -- invoice_ship_date 等列由 _ensure_column 补齐
             CREATE TABLE IF NOT EXISTS outbound_batches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 note TEXT NOT NULL DEFAULT '',
@@ -295,6 +310,7 @@ def init_db() -> None:
                 payment_note TEXT NOT NULL DEFAULT ''
             );
 
+            -- FEATURE: INVENTORY
             CREATE TABLE IF NOT EXISTS stock_boxes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 box_no INTEGER NOT NULL UNIQUE,
@@ -304,6 +320,7 @@ def init_db() -> None:
                 FOREIGN KEY (parent_id) REFERENCES stock_boxes(id) ON DELETE SET NULL
             );
 
+            -- FEATURE: INVENTORY
             CREATE TABLE IF NOT EXISTS stock_box_orders (
                 box_id INTEGER NOT NULL,
                 order_id INTEGER NOT NULL,
@@ -312,6 +329,7 @@ def init_db() -> None:
                 FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE CASCADE
             );
 
+            -- FEATURE: INBOUND / OUTBOUND_BATCH  进库与出库箱；包装列由 _ensure_column 补齐
             CREATE TABLE IF NOT EXISTS shipments (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 direction TEXT NOT NULL DEFAULT 'inbound',
@@ -328,6 +346,7 @@ def init_db() -> None:
                 FOREIGN KEY (batch_id) REFERENCES outbound_batches(id) ON DELETE CASCADE
             );
 
+            -- FEATURE: INBOUND / OUTBOUND_BATCH
             CREATE TABLE IF NOT EXISTS shipment_items (
                 shipment_id INTEGER NOT NULL,
                 item_id INTEGER NOT NULL,
@@ -337,6 +356,7 @@ def init_db() -> None:
                 FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
             );
 
+            -- FEATURE: ACTION_LOG
             CREATE TABLE IF NOT EXISTS action_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 action_type TEXT NOT NULL,
@@ -347,6 +367,7 @@ def init_db() -> None:
                 actor_user_id INTEGER
             );
 
+            -- FEATURE: AUTH / USER_MANAGEMENT
             CREATE TABLE IF NOT EXISTS users (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 email TEXT NOT NULL UNIQUE,
@@ -357,6 +378,7 @@ def init_db() -> None:
                 created_at TEXT NOT NULL
             );
 
+            -- FEATURE: AUTH
             CREATE TABLE IF NOT EXISTS sessions (
                 token_hash TEXT PRIMARY KEY,
                 user_id INTEGER NOT NULL,
@@ -365,6 +387,7 @@ def init_db() -> None:
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
             );
 
+            -- FEATURE: ORDER_REQUEST / APPLY_STATS / CUSTOMER_PORTAL
             CREATE TABLE IF NOT EXISTS order_requests (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 request_code TEXT NOT NULL UNIQUE,

@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# ============================================================
+# SHARED MODULE / FEATURE: SYSTEM
+#
+# [用途] 商品种类标签与日文别名归一
+# [接口] GET /api/product-kinds
+# [数据] backend/data/product_kinds.json
+# ============================================================
 import json
 import unicodedata
 from pathlib import Path

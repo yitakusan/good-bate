@@ -2,6 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] 订单状态由明细最慢状态汇总
+# [使用功能] FEATURE: ORDER / INBOUND / OUTBOUND_BATCH
+# ============================================================
+
 STATUS_RANK = {
     "ordered": 0,
     "inbound_shipped": 1,

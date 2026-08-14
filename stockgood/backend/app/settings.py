@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] 环境变量、库模式（production/shadow）、CORS
+# [使用功能] FEATURE: SYSTEM / AUTH
+# ============================================================
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Optional

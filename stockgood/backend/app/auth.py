@@ -1,5 +1,13 @@
 """Session cookie auth + optional legacy admin token."""
 
+# ============================================================
+# FEATURE: AUTH
+#
+# [用途] 密码哈希、Cookie 会话、角色依赖（require_staff 等）
+# [接口] /api/auth/*  /api/users*
+# [数据库] users, sessions
+# [代码索引] docs/CODE_INDEX.md#feature-auth
+# ============================================================
 from __future__ import annotations
 
 import hashlib

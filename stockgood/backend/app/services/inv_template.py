@@ -14,6 +14,15 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from app.database import DATA_DIR
 
+# ============================================================
+# FEATURE: INV_EXPORT
+#
+# [用途] 填充固定双 Sheet 模板（inv + PACKING LIST ）
+# [模板] backend/data/templates/inv_fit_shipping.xlsx（只读）
+# [调用] outbound_batches.export_inv_xlsx / export_inv_preview_xlsx
+# [代码索引] docs/CODE_INDEX.md#feature-inv_export
+# ============================================================
+
 TEMPLATE_PATH = DATA_DIR / "templates" / "inv_fit_shipping.xlsx"
 INV_SHEET = "inv"
 PACK_SHEET = "PACKING LIST "
@@ -111,6 +120,10 @@ def _ensure_template() -> Path:
     return TEMPLATE_PATH
 
 
+# ============================================================
+# FEATURE: INV_EXPORT
+# [业务逻辑] build_inv_workbook — 填充模板双 Sheet
+# ============================================================
 def build_inv_workbook(
     *,
     batch_id: int,

@@ -1,3 +1,11 @@
+// ============================================================
+// SHARED MODULE
+//
+// [用途] 浏览器 fetch 封装；几乎所有页面经此调用后端
+// [文件] frontend/src/api.ts
+// [后端] backend/app/main.py
+// [代码索引] docs/CODE_INDEX.md#shared-modules
+// ============================================================
 export type ItemStatus =
   | "ordered"
   | "inbound_shipped"
@@ -388,6 +396,12 @@ export interface OrderRequestCreate {
   note?: string;
 }
 
+// ============================================================
+// FEATURE: AUTH
+// [API函数] getAdminToken / setAdminToken
+// [用途] 遗留 X-Admin-Token（与 Cookie 会话并存）
+// [代码索引] docs/CODE_INDEX.md#feature-auth
+// ============================================================
 const ADMIN_TOKEN_KEY = "stockgood_admin_token";
 
 export function getAdminToken(): string {
@@ -451,6 +465,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+// ============================================================
+// FEATURE: TUNNEL
+// [API函数] fetchTunnelStatus / startTunnel / stopTunnel
+// [调用页面] frontend/src/App.tsx（页头）
+// [后端接口] GET /api/tunnel  POST /api/tunnel/start  POST /api/tunnel/stop
+// [代码索引] docs/CODE_INDEX.md#feature-tunnel
+// ============================================================
 export function fetchTunnelStatus() {
   return request<TunnelStatus>("/api/tunnel");
 }
@@ -469,10 +490,23 @@ export function stopTunnel() {
   );
 }
 
+// ============================================================
+// FEATURE: SYSTEM
+// [API函数] fetchMeta
+// [后端接口] GET /api/meta
+// [代码索引] docs/CODE_INDEX.md#feature-system
+// ============================================================
 export function fetchMeta() {
   return request<AppMeta>("/api/meta");
 }
 
+// ============================================================
+// FEATURE: AUTH
+// [API函数] login / logout / registerCustomer / fetchMe
+// [调用页面] AuthPanel.tsx, App.tsx, ApplyPage.tsx, MePage.tsx
+// [后端接口] POST /api/auth/login | logout | register  GET /api/auth/me
+// [代码索引] docs/CODE_INDEX.md#feature-auth
+// ============================================================
 export function login(email: string, password: string) {
   return request<AuthUser>("/api/auth/login", {
     method: "POST",
@@ -499,6 +533,14 @@ export function fetchMe() {
   return request<AuthUser | null>("/api/auth/me");
 }
 
+// ============================================================
+// FEATURE: CUSTOMER_PORTAL
+// [API函数] fetchMyOrderRequests / confirmDeposit
+// [调用页面] MePage.tsx（ApplyPage 也调用 confirmDeposit）
+// [后端接口] GET /api/me/order-requests
+//            POST /api/me/order-requests/{code}/confirm-deposit
+// [代码索引] docs/CODE_INDEX.md#feature-customer_portal
+// ============================================================
 export function fetchMyOrderRequests(status?: string) {
   const qs = new URLSearchParams();
   if (status) qs.set("status", status);
@@ -516,6 +558,14 @@ export function confirmDeposit(code: string, payment_ref = "") {
   );
 }
 
+// ============================================================
+// FEATURE: ORDER_REQUEST
+// [API函数] staffConfirmDeposit / createOrderRequest / fetchPublicOrderRequests /
+//   fetchOrderRequestByCode / fetchOrderRequests / confirmOrderRequest / rejectOrderRequest
+// [调用页面] App.tsx 申请单 Tab；ApplyPage.tsx（公开提交）
+// [说明] fetchOrderRequestByCode 前端页面未调用（仅封装）
+// [代码索引] docs/CODE_INDEX.md#feature-order_request
+// ============================================================
 export function staffConfirmDeposit(requestId: number, payment_ref = "") {
   return request<OrderRequest>(
     `/api/order-requests/${requestId}/confirm-deposit`,
@@ -526,6 +576,13 @@ export function staffConfirmDeposit(requestId: number, payment_ref = "") {
   );
 }
 
+// ============================================================
+// FEATURE: USER_MANAGEMENT
+// [API函数] fetchUsers / createUser / setUserActive
+// [调用页面] App.tsx Tab 用户
+// [后端接口] GET|POST /api/users  PATCH /api/users/{id}/active
+// [代码索引] docs/CODE_INDEX.md#feature-user_management
+// ============================================================
 export function fetchUsers() {
   return request<AuthUser[]>("/api/users");
 }
@@ -549,6 +606,12 @@ export function setUserActive(userId: number, is_active: boolean) {
   });
 }
 
+// ============================================================
+// FEATURE: SYSTEM
+// [API函数] fetchProductKinds
+// [后端接口] GET /api/product-kinds
+// [代码索引] docs/CODE_INDEX.md#feature-system
+// ============================================================
 export function fetchProductKinds() {
   return request<{ labels: string[]; aliases: Record<string, string[]> }>(
     "/api/product-kinds",
@@ -563,6 +626,14 @@ export function fetchShops() {
   return request<string[]>("/api/shops");
 }
 
+// ============================================================
+// FEATURE: ORDER
+// [API函数] fetchOrders / createOrder / updateOrder / fetchItems / createItem / updateItem / fetchStats
+// [调用页面] App.tsx Tab 订单
+// [说明] createItem 前端页面未调用（仅封装）
+// [后端接口] /api/orders*  /api/items*  GET /api/stats
+// [代码索引] docs/CODE_INDEX.md#feature-order
+// ============================================================
 export function fetchOrders(params: {
   status?: string;
   shop?: string;
@@ -597,6 +668,13 @@ export function updateOrder(
   });
 }
 
+// ============================================================
+// FEATURE: INBOUND
+// [API函数] createOrderInbound / fetchShipments / confirmShipment
+// [调用页面] App.tsx Tab 进库
+// [后端接口] POST /api/orders/{id}/inbound  GET /api/shipments  POST /api/shipments/{id}/confirm
+// [代码索引] docs/CODE_INDEX.md#feature-inbound
+// ============================================================
 export function createOrderInbound(
   orderId: number,
   payload: { tracking_no: string; carrier: Carrier; item_ids: number[] },
@@ -631,6 +709,13 @@ export function createItem(payload: ItemCreate) {
   });
 }
 
+// ============================================================
+// FEATURE: ORDER_IMPORT
+// [API函数] createItemsBatch / scrapeUrl
+// [调用页面] App.tsx Tab 抓取
+// [后端接口] POST /api/items/batch  POST /api/scrape
+// [代码索引] docs/CODE_INDEX.md#feature-order_import
+// ============================================================
 export function createItemsBatch(items: ItemCreate[]) {
   return request<Item[]>("/api/items/batch", {
     method: "POST",
@@ -645,6 +730,7 @@ export function scrapeUrl(url: string, html?: string) {
   });
 }
 
+// FEATURE: ORDER_REQUEST — 公开抓取（顾客申请页）
 export function publicScrapeUrl(url: string) {
   return request<ScrapeResult>("/api/public/scrape", {
     method: "POST",
@@ -725,6 +811,14 @@ export function confirmShipment(id: number) {
   return request<Shipment>(`/api/shipments/${id}/confirm`, { method: "POST" });
 }
 
+// ============================================================
+// FEATURE: INVENTORY
+// [API函数] fetchStockBoxes / createStockBox / combineStockBox / addStockBoxOrders /
+//   updateStockBox / removeStockBoxOrders / deleteStockBox / mergeStockBoxChild / detachStockBoxChild
+// [调用页面] App.tsx Tab 库存
+// [后端接口] /api/stock-boxes*
+// [代码索引] docs/CODE_INDEX.md#feature-inventory
+// ============================================================
 export function fetchStockBoxes() {
   return request<StockBox[]>("/api/stock-boxes");
 }
@@ -793,6 +887,13 @@ export function detachStockBoxChild(childId: number) {
   });
 }
 
+// ============================================================
+// FEATURE: OUTBOUND_BATCH
+// [API函数] fetchOutboundBatches / createOutboundBatch / updateOutboundBatch / confirmOutboundBatch
+// [调用页面] App.tsx Tab 出库
+// [后端接口] GET|POST /api/outbound-batches  PUT .../{id}  POST .../{id}/confirm
+// [代码索引] docs/CODE_INDEX.md#feature-outbound_batch
+// ============================================================
 export function fetchOutboundBatches(limit = 50) {
   return request<OutboundBatch[]>(`/api/outbound-batches?limit=${limit}`);
 }
@@ -857,6 +958,13 @@ export function confirmOutboundBatch(id: number) {
   });
 }
 
+// ============================================================
+// FEATURE: FINANCE
+// [API函数] updateOutboundBatchFinance
+// [调用页面] App.tsx Tab 出库（运费/收款表单）
+// [后端接口] PATCH /api/outbound-batches/{id}/finance
+// [代码索引] docs/CODE_INDEX.md#feature-finance
+// ============================================================
 export function updateOutboundBatchFinance(
   id: number,
   payload: {
@@ -874,6 +982,13 @@ export function updateOutboundBatchFinance(
   });
 }
 
+// ============================================================
+// FEATURE: FEE_DETAIL
+// [API函数] downloadOutboundFeeDetail
+// [调用页面] App.tsx 出库 Tab 按钮「费用明细 Excel」
+// [后端接口] GET /api/outbound-batches/{id}/fee-detail.xlsx
+// [代码索引] docs/CODE_INDEX.md#feature-fee_detail
+// ============================================================
 export function downloadOutboundFeeDetail(id: number) {
   const headers: Record<string, string> = {};
   const adminToken = getAdminToken();
@@ -976,6 +1091,13 @@ async function downloadXlsxBlob(
   URL.revokeObjectURL(url);
 }
 
+// ============================================================
+// FEATURE: INV_EXPORT
+// [API函数] downloadOutboundInv / downloadOutboundInvPreview
+// [调用页面] App.tsx 出库 Tab 按钮「导出 INV」
+// [后端接口] GET .../inv.xlsx  POST .../preview-inv.xlsx
+// [代码索引] docs/CODE_INDEX.md#feature-inv_export
+// ============================================================
 export function downloadOutboundInv(id: number) {
   return downloadXlsxBlob(
     `/api/outbound-batches/${id}/inv.xlsx`,
@@ -1013,6 +1135,13 @@ export function downloadOutboundInvPreview(payload: {
   );
 }
 
+// ============================================================
+// FEATURE: FINANCE
+// [API函数] fetchFinanceSummary
+// [调用页面] App.tsx Tab 财务
+// [后端接口] GET /api/finance/summary
+// [代码索引] docs/CODE_INDEX.md#feature-finance
+// ============================================================
 export function fetchFinanceSummary(month?: string) {
   const q = month ? `?month=${encodeURIComponent(month)}` : "";
   return request<FinanceSummary>(`/api/finance/summary${q}`);
@@ -1043,6 +1172,13 @@ export interface ApplyReport {
   top_ips: { ip: string; count: number; goods_jpy: number }[];
 }
 
+// ============================================================
+// FEATURE: APPLY_STATS
+// [API函数] fetchApplyReport
+// [调用页面] App.tsx Tab 统计
+// [后端接口] GET /api/reports/apply
+// [代码索引] docs/CODE_INDEX.md#feature-apply_stats
+// ============================================================
 export function fetchApplyReport(params: {
   period?: "day" | "month";
   day?: string;
@@ -1058,6 +1194,13 @@ export function fetchApplyReport(params: {
   return request<ApplyReport>(`/api/reports/apply${suffix}`);
 }
 
+// ============================================================
+// FEATURE: ACTION_LOG
+// [API函数] fetchActionLogs / fetchLatestActionLog / undoActionLog
+// [调用页面] App.tsx 页头撤回条 + Tab 日志
+// [后端接口] GET /api/action-logs  GET /api/action-logs/latest  POST /api/action-logs/{id}/undo
+// [代码索引] docs/CODE_INDEX.md#feature-action_log
+// ============================================================
 export function fetchActionLogs(limit = 50) {
   return request<ActionLog[]>(`/api/action-logs?limit=${limit}`);
 }

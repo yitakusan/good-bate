@@ -7,6 +7,13 @@ from fastapi import HTTPException
 
 from app.database import get_conn
 
+# ============================================================
+# FEATURE: FINANCE
+#
+# [用途] 财务月汇总（本月下单 / 本月出库）
+# [接口] GET /api/finance/summary
+# [代码索引] docs/CODE_INDEX.md#feature-finance
+# ============================================================
 
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 

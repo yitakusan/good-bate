@@ -10,6 +10,15 @@ from app.auth_context import get_actor_user_id
 from app.database import get_conn
 from app.services.order_status import sync_order_status, sync_orders_for_items
 
+# ============================================================
+# FEATURE: ACTION_LOG
+#
+# [用途] 写操作记录与撤回
+# [接口] /api/action-logs*
+# [数据库] action_logs
+# [代码索引] docs/CODE_INDEX.md#feature-action_log
+# ============================================================
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()

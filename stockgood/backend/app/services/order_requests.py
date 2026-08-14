@@ -4,6 +4,15 @@ Lifecycle: pending_payment -> submitted -> ordered | rejected
 Login required; 30% deposit must be confirmed before status becomes submitted.
 """
 
+# ============================================================
+# FEATURE: ORDER_REQUEST
+#
+# [用途] 顾客申请生命周期：pending_payment → submitted → ordered | rejected
+# [接口] /api/public/order-requests*  /api/order-requests*  /api/me/order-requests*
+# [数据库] order_requests
+# [代码索引] docs/CODE_INDEX.md#feature-order_request
+# ============================================================
+
 from __future__ import annotations
 
 import re

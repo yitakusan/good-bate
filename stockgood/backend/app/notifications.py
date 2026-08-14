@@ -1,5 +1,12 @@
 """Optional SMTP email notifications for order-request status changes."""
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] 申请状态邮件通知（若启用）
+# [使用功能] FEATURE: ORDER_REQUEST
+# ============================================================
+
 from __future__ import annotations
 
 import logging

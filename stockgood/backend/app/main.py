@@ -88,6 +88,14 @@ from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
 APP_VERSION = "0.9.14"
 
+# ============================================================
+# SHARED MODULE
+#
+# [用途] FastAPI 全部 HTTP endpoint 入口；业务在 app/services/
+# [代码索引] docs/CODE_INDEX.md
+# 各段用 FEATURE: 注释跳转
+# ============================================================
+
 OPENAPI_TAGS = [
     {"name": "系统", "description": "健康检查、元信息与 Cloudflare 隧道"},
     {"name": "账号", "description": "登录、注册与用户管理"},
@@ -143,6 +151,14 @@ app.mount(
 )
 
 
+# ============================================================
+# FEATURE: SYSTEM
+#
+# [接口] GET /api/health  GET /api/meta
+# [功能] 健康检查与前端元信息（库模式、版本、当前用户）
+# [前端调用] frontend/src/api.ts → fetchMeta()
+# [代码索引] docs/CODE_INDEX.md#feature-system
+# ============================================================
 @app.get("/api/health", tags=["系统"], summary="健康检查")
 def health() -> dict[str, object]:
     """返回服务状态、库模式、磁盘与最近备份信息。"""
@@ -197,6 +213,18 @@ def meta(
     }
 
 
+# ============================================================
+# FEATURE: AUTH
+#
+# [接口] POST /api/auth/login | logout | register | change-password
+#        GET /api/auth/me
+# [功能] Cookie 会话登录
+# [前端调用] frontend/src/api.ts → login() / logout() / registerCustomer() / fetchMe()
+# [说明] POST /api/auth/change-password 前端未调用
+# [业务逻辑] backend/app/auth.py
+# [数据库] users, sessions
+# [代码索引] docs/CODE_INDEX.md#feature-auth
+# ============================================================
 # --- Auth ---
 
 
@@ -257,6 +285,13 @@ def auth_change_password(
     return {"ok": True}
 
 
+# ============================================================
+# FEATURE: USER_MANAGEMENT
+#
+# [接口] GET|POST /api/users  PATCH /api/users/{user_id}/active
+# [前端调用] frontend/src/api.ts → fetchUsers / createUser / setUserActive
+# [代码索引] docs/CODE_INDEX.md#feature-user_management
+# ============================================================
 @app.get("/api/users", response_model=list[UserOut], tags=["账号"], summary="用户列表")
 def api_list_users(_: dict = Depends(require_admin_role)) -> list[dict]:
     return list_users()
@@ -288,6 +323,11 @@ def api_set_user_active(
     return set_user_active(user_id, payload.is_active)
 
 
+# ============================================================
+# FEATURE: SYSTEM
+# [接口] GET /api/product-kinds
+# [前端调用] fetchProductKinds()
+# ============================================================
 @app.get("/api/product-kinds", tags=["货品"], summary="商品种类列表")
 def list_product_kinds(_: dict = Depends(require_staff)) -> dict[str, object]:
     """返回可选种类标签及关键字别名（日文为主，来自 product_kinds.json）。"""
@@ -300,6 +340,14 @@ def list_product_kinds(_: dict = Depends(require_staff)) -> dict[str, object]:
     }
 
 
+# ============================================================
+# FEATURE: TUNNEL
+#
+# [接口] GET /api/tunnel  POST /api/tunnel/start  POST /api/tunnel/stop
+# [前端调用] fetchTunnelStatus / startTunnel / stopTunnel
+# [业务逻辑] backend/app/tunnel_status.py
+# [代码索引] docs/CODE_INDEX.md#feature-tunnel
+# ============================================================
 @app.get("/api/tunnel", tags=["系统"], summary="隧道状态")
 def tunnel_status(_: dict = Depends(require_staff)) -> dict[str, object]:
     """查询本机 cloudflared 临时隧道是否开启，以及公开 URL。"""
@@ -318,6 +366,18 @@ def tunnel_stop(_: dict = Depends(require_admin_role)) -> dict[str, object]:
     return stop_tunnel()
 
 
+# ============================================================
+# FEATURE: ORDER_REQUEST
+#
+# [接口] POST /api/public/scrape
+#        POST|GET /api/public/order-requests
+#        GET /api/public/order-requests/{code}
+#        GET|POST /api/order-requests*
+# [前端调用] ApplyPage + App.tsx 申请单 Tab
+# [业务逻辑] backend/app/services/order_requests.py
+# [数据库] order_requests
+# [代码索引] docs/CODE_INDEX.md#feature-order_request
+# ============================================================
 @app.post(
     "/api/public/scrape",
     response_model=ScrapeResult,
@@ -392,6 +452,14 @@ def public_get_order_request(code: str, request: Request) -> dict:
     return order_requests_svc.get_by_code(code)
 
 
+# ============================================================
+# FEATURE: CUSTOMER_PORTAL
+#
+# [接口] GET /api/me/order-requests
+#        POST /api/me/order-requests/{code}/confirm-deposit
+# [前端调用] MePage.tsx → fetchMyOrderRequests / confirmDeposit
+# [代码索引] docs/CODE_INDEX.md#feature-customer_portal
+# ============================================================
 @app.get(
     "/api/me/order-requests",
     response_model=list[OrderRequestPublicOut],
@@ -499,6 +567,18 @@ def reject_order_request(
     return order_requests_svc.reject_request(request_id, payload)
 
 
+# ============================================================
+# FEATURE: ORDER
+#
+# [接口] GET /api/stats  GET /api/shops
+#        GET|POST /api/orders  GET|PATCH /api/orders/{id}
+#        POST /api/orders/{id}/lines
+#        GET|POST /api/items  PATCH /api/items/{id}
+# [前端调用] App.tsx Tab 订单
+# [业务逻辑] backend/app/services/orders.py  items.py
+# [数据库] orders, items
+# [代码索引] docs/CODE_INDEX.md#feature-order
+# ============================================================
 @app.get("/api/stats", tags=["订单"], summary="状态统计", response_model=StatsOut)
 def stats(_: dict = Depends(require_staff)) -> dict:
     """各订单/货品状态数量汇总。"""
@@ -585,6 +665,14 @@ def add_lines(
     return orders_svc.add_lines(order_id, lines)
 
 
+# ============================================================
+# FEATURE: INBOUND
+#
+# [接口] POST /api/orders/{order_id}/inbound
+# [前端调用] createOrderInbound()
+# 后续 GET /api/items 仍属 FEATURE: ORDER；运单列表见下方 FEATURE: INBOUND
+# [代码索引] docs/CODE_INDEX.md#feature-inbound
+# ============================================================
 @app.post(
     "/api/orders/{order_id}/inbound",
     response_model=ShipmentOut,
@@ -640,6 +728,14 @@ def create_item(
     return items_svc.create_item(payload)
 
 
+# ============================================================
+# FEATURE: ORDER_IMPORT
+#
+# [接口] POST /api/items/batch  POST /api/scrape
+# [前端调用] createItemsBatch() / scrapeUrl()
+# [业务逻辑] backend/app/scrapers/preview.py  services/items.py
+# [代码索引] docs/CODE_INDEX.md#feature-order_import
+# ============================================================
 @app.post(
     "/api/items/batch",
     response_model=list[ItemOut],
@@ -704,6 +800,16 @@ def update_item(
     return items_svc.update_item(item_id, payload)
 
 
+# ============================================================
+# FEATURE: INBOUND
+#
+# [接口] GET|POST /api/shipments  GET /api/shipments/{id}
+#        POST /api/shipments/{id}/confirm
+# [前端调用] fetchShipments / confirmShipment
+# [说明] POST /api/shipments 进库 UI 未使用
+# [业务逻辑] backend/app/services/shipments.py
+# [代码索引] docs/CODE_INDEX.md#feature-inbound
+# ============================================================
 @app.get(
     "/api/shipments",
     response_model=list[ShipmentOut],
@@ -765,6 +871,15 @@ def confirm_shipment(
     return shipments_svc.confirm_shipment(shipment_id)
 
 
+# ============================================================
+# FEATURE: INVENTORY
+#
+# [接口] /api/stock-boxes*
+# [前端调用] App.tsx Tab 库存
+# [业务逻辑] backend/app/services/stock_boxes.py
+# [数据库] stock_boxes, stock_box_orders
+# [代码索引] docs/CODE_INDEX.md#feature-inventory
+# ============================================================
 @app.get(
     "/api/stock-boxes",
     response_model=list[StockBoxOut],
@@ -901,6 +1016,17 @@ def delete_stock_box(
     return {"ok": True}
 
 
+# ============================================================
+# FEATURE: OUTBOUND_BATCH
+#
+# [接口] GET|POST /api/outbound-batches
+#        GET|PUT /api/outbound-batches/{id}
+#        POST /api/outbound-batches/{id}/confirm
+# [前端调用] createOutboundBatch / updateOutboundBatch / confirmOutboundBatch
+# [业务逻辑] backend/app/services/outbound_batches.py
+# [数据库] outbound_batches, shipments, shipment_items
+# [代码索引] docs/CODE_INDEX.md#feature-outbound_batch
+# ============================================================
 @app.get(
     "/api/outbound-batches",
     response_model=list[OutboundBatchOut],
@@ -970,6 +1096,13 @@ def update_outbound_batch(
     )
 
 
+# ============================================================
+# FEATURE: FINANCE
+#
+# [接口] PATCH /api/outbound-batches/{batch_id}/finance
+# [前端调用] updateOutboundBatchFinance()
+# [代码索引] docs/CODE_INDEX.md#feature-finance
+# ============================================================
 @app.patch(
     "/api/outbound-batches/{batch_id}/finance",
     response_model=OutboundBatchOut,
@@ -987,6 +1120,14 @@ def update_outbound_batch_finance(
     )
 
 
+# ============================================================
+# FEATURE: FEE_DETAIL
+#
+# [接口] GET /api/outbound-batches/{batch_id}/fee-detail.xlsx
+# [前端调用] downloadOutboundFeeDetail()  按钮「费用明细 Excel」
+# [业务逻辑] outbound_batches.export_fee_detail_xlsx
+# [代码索引] docs/CODE_INDEX.md#feature-fee_detail
+# ============================================================
 @app.get(
     "/api/outbound-batches/{batch_id}/fee-detail.xlsx",
     tags=["财务"],
@@ -1007,6 +1148,15 @@ def export_outbound_fee_detail(
     )
 
 
+# ============================================================
+# FEATURE: INV_EXPORT
+#
+# [接口] GET /api/outbound-batches/{batch_id}/inv.xlsx
+#        POST /api/outbound-batches/preview-inv.xlsx
+# [前端调用] downloadOutboundInv / downloadOutboundInvPreview  按钮「导出 INV」
+# [业务逻辑] inv_template.build_inv_workbook
+# [代码索引] docs/CODE_INDEX.md#feature-inv_export
+# ============================================================
 @app.get(
     "/api/outbound-batches/{batch_id}/inv.xlsx",
     tags=["出库"],
@@ -1045,6 +1195,14 @@ def export_outbound_inv_preview(
     )
 
 
+# ============================================================
+# FEATURE: FINANCE
+#
+# [接口] GET /api/finance/summary
+# [前端调用] fetchFinanceSummary()
+# [业务逻辑] backend/app/services/finance.py
+# [代码索引] docs/CODE_INDEX.md#feature-finance
+# ============================================================
 @app.get(
     "/api/finance/summary",
     response_model=FinanceSummaryOut,
@@ -1061,6 +1219,14 @@ def finance_summary(
     return finance_svc.month_summary(month)
 
 
+# ============================================================
+# FEATURE: APPLY_STATS
+#
+# [接口] GET /api/reports/apply
+# [前端调用] fetchApplyReport()
+# [业务逻辑] backend/app/services/apply_stats.py
+# [代码索引] docs/CODE_INDEX.md#feature-apply_stats
+# ============================================================
 @app.get(
     "/api/reports/apply",
     tags=["统计"],
@@ -1094,6 +1260,15 @@ def confirm_outbound_batch(
     return outbound_svc.confirm_batch(batch_id)
 
 
+# ============================================================
+# FEATURE: ACTION_LOG
+#
+# [接口] GET /api/action-logs  GET /api/action-logs/latest
+#        POST /api/action-logs/{log_id}/undo
+# [前端调用] fetchActionLogs / fetchLatestActionLog / undoActionLog
+# [业务逻辑] backend/app/services/action_log.py
+# [代码索引] docs/CODE_INDEX.md#feature-action_log
+# ============================================================
 @app.get(
     "/api/action-logs",
     response_model=list[ActionLogOut],

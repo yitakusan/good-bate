@@ -7,6 +7,15 @@ from fastapi import HTTPException
 
 from app.database import get_conn
 
+# ============================================================
+# FEATURE: INVENTORY
+#
+# [用途] 在库合箱（不改货品状态）
+# [接口] /api/stock-boxes*
+# [数据库] stock_boxes, stock_box_orders
+# [代码索引] docs/CODE_INDEX.md#feature-inventory
+# ============================================================
+
 
 def _now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
