@@ -810,6 +810,22 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
         )
 
     page_hint = source_url or ""
+
+    from app.scrapers.miraithings import (
+        is_miraithings_url,
+        looks_like_miraithings_html,
+        parse_miraithings_product_html,
+    )
+
+    if is_miraithings_url(page_hint) or looks_like_miraithings_html(html):
+        product = parse_miraithings_product_html(html, page_hint or "https://miraithings.com/")
+        if product and product.get("name"):
+            return {
+                "kind": "list",
+                "products": [product],
+                "message": "已从 miraithings.com 页面源码解析 1 件（主价 p.item-price span）",
+            }
+
     if html_looks_gone(html) and (
         is_zozo_url(page_hint) or "zozo.jp" in (html[:4000].lower())
     ):
@@ -836,6 +852,10 @@ async def scrape_url(url: str) -> dict[str, Any]:
     # HobbySearch / 1999.co.jp — dedicated parser (Cloudflare-hostile to httpx).
     from app.scrapers.hobbysearch import is_1999_url, scrape_1999_product
     from app.scrapers.asobistore import is_asobi_url, parse_asobi_product_html
+    from app.scrapers.miraithings import (
+        is_miraithings_url,
+        parse_miraithings_product_html,
+    )
     from app.scrapers.zozo import blocked_message, is_zozo_url
 
     if is_1999_url(url):
@@ -851,6 +871,19 @@ async def scrape_url(url: str) -> dict[str, Any]:
         )
 
     async with httpx.AsyncClient(headers=HEADERS) as client:
+        if is_miraithings_url(url):
+            try:
+                resp = await _fetch(client, url)
+                if resp.status_code == 200:
+                    product = parse_miraithings_product_html(resp.text, str(resp.url))
+                    if product and product.get("name"):
+                        return {
+                            "kind": "list",
+                            "products": [product],
+                            "message": "已从 miraithings.com 商品页抓取 1 件（主价 p.item-price span）",
+                        }
+            except Exception:
+                pass
         if is_asobi_url(url) and "/products/detail/" in urlparse(url).path:
             try:
                 resp = await _fetch(client, url)
