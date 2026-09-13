@@ -86,7 +86,7 @@ from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
-APP_VERSION = "0.9.16"
+APP_VERSION = "0.9.27"
 
 # ============================================================
 # SHARED MODULE

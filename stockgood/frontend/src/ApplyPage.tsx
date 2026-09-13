@@ -24,6 +24,11 @@
 import { useEffect, useRef, useState } from "react";
 
 import {
+  looksLikeHtmlOrJsonPaste,
+  normalizeHtmlPaste,
+  parseScrapeUrls,
+} from "./scrapePaste";
+import {
   AuthUser,
   OrderRequestPublic,
   ScrapeProduct,
@@ -55,25 +60,6 @@ function amountOf(req: OrderRequestPublic) {
   if (req.amount != null) return req.amount;
   if (req.unit_cost == null) return null;
   return req.unit_cost * req.qty;
-}
-
-function parseScrapeUrls(raw: string): string[] {
-  const seen = new Set<string>();
-  const urls: string[] = [];
-  for (const part of raw.split(/[\n\r,;\t]+/)) {
-    let text = part.trim();
-    if (!text) continue;
-    text = text.replace(/^\d+[\.\)、]\s*/, "").replace(/^[-*•]\s*/, "");
-    if (!/^https?:\/\//i.test(text) && text.includes(".")) {
-      text = `https://${text}`;
-    }
-    if (!/^https?:\/\//i.test(text)) continue;
-    const key = text.toLowerCase();
-    if (seen.has(key)) continue;
-    seen.add(key);
-    urls.push(text);
-  }
-  return urls;
 }
 
 export default function ApplyPage() {
@@ -259,9 +245,33 @@ export default function ApplyPage() {
   }
 
   async function onScrape() {
-    const urls = parseScrapeUrls(scrapeUrlValue);
+    const raw = scrapeUrlValue;
+    if (looksLikeHtmlOrJsonPaste(raw)) {
+      const html = normalizeHtmlPaste(raw);
+      setScrapeBusy(true);
+      setError("");
+      setMessage("正在解析粘贴的页面 HTML / JSON…");
+      try {
+        const result = await publicScrapeUrl("", html);
+        const { added } = appendScrapeProducts(result.products || [], collection);
+        setMessage(
+          result.message ||
+            `已从 HTML 解析，新增 ${added.length} 条商品`,
+        );
+        if (added.length) setScrapeUrlValue("");
+      } catch (err) {
+        setError(errorText(err));
+      } finally {
+        setScrapeBusy(false);
+      }
+      return;
+    }
+
+    const urls = parseScrapeUrls(raw);
     if (!urls.length) {
-      setError("请粘贴一个或多个网址（每行一个，也可用逗号分隔）");
+      setError(
+        "请粘贴网址（每行一个），或粘贴 F12→Elements 的列表 outerHTML / Network JSON（&mall）",
+      );
       return;
     }
     setScrapeBusy(true);
@@ -493,13 +503,13 @@ export default function ApplyPage() {
         ) : null}
         <div className="scrape-bar scrape-bar-batch">
           <label className="grow">
-            URL 列表
+            URL 列表 / HTML 片段 / JSON
             <textarea
               rows={5}
               value={scrapeUrlValue}
               onChange={(e) => setScrapeUrlValue(e.target.value)}
               placeholder={
-                "每行一个链接，例如：\nhttps://jumpcs.shueisha.co.jp/shop/g/g4530430540549/\nhttps://animegood.shop/products/xxx"
+                "每行一个链接，或粘贴 Elements outerHTML / Network JSON（&mall）\nhttps://jumpcs.shueisha.co.jp/shop/g/g4530430540549/\nhttps://animegood.shop/products/xxx"
               }
             />
           </label>
@@ -512,7 +522,9 @@ export default function ApplyPage() {
             >
               {scrapeBusy
                 ? "抓取中…"
-                : `批量抓取（${parseScrapeUrls(scrapeUrlValue).length || 0}）`}
+                : looksLikeHtmlOrJsonPaste(scrapeUrlValue)
+                  ? "解析 HTML"
+                  : `批量抓取（${parseScrapeUrls(scrapeUrlValue).length || 0}）`}
             </button>
             {collection.length > 0 && (
               <button type="button" className="btn" onClick={clearCollection}>

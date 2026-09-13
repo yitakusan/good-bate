@@ -15,14 +15,14 @@
 
 ## Current Development State
 
-最后更新：2026-08-14
+最后更新：2026-09-13
 
-当前产品版本：**0.9.16**
+当前产品版本：**0.9.27**
 
 ### 当前稳定功能
 
 - FEATURE: ORDER — 库存订单 + 明细
-- FEATURE: ORDER_IMPORT — 抓取导入
+- FEATURE: ORDER_IMPORT — 抓取导入（含 zozo 注文详情、&mall 注文履歴、vvstore 注文履歴详细、sofmap 商品页与お取引の詳細、cystore 購入履歴詳細、animate 注文履歴、eeo ご注文履歴詳細；订单后再抓同商品详情页可回填 JAN）
 - FEATURE: ORDER_REQUEST — 顾客申请（须登录、待付定金 30%）
 - FEATURE: INBOUND — 按订单进库
 - FEATURE: INVENTORY — 在库合箱（不改货品状态）
@@ -35,7 +35,7 @@
 
 ### 当前正在开发
 
-- 无进行中的业务功能开发。
+- FEATURE: ORDER_IMPORT — eeo ご注文履歴詳細粘贴：fixture/unittest 已过；等用户用真实 HTML 验收（影子库导入）。
 
 ### 待实现 / 旧行为（用户 2026-08-14 确认，不是 bug）
 
@@ -98,6 +98,309 @@ FEATURE: XXXXX
 ### 不要做
 
 - ...
+
+---
+
+## Handoff - 2026-09-13 (eeo ご注文履歴詳細)
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — eeo.today（eeo Store）「ご注文履歴詳細」HTML 粘贴导入
+
+### 已完成
+
+- `eeo.py`：识别/解析 `.ec-orderDelivery__item`、ご注文番号、送料、合计；单价取自 `￥N × qty`；邮件正文「商品コード」按品名回填 barcode；按 pid 合并数量
+- 接入 `preview.scrape_html_document`（animate 订单分支之后）
+- 前端抓取提示 + `scrapePaste` 的 `eeo:product:{id}`
+- fixture + `test_eeo_order.py`；版本 **0.9.27**
+
+### 未完成
+
+- 用户用真实整页源代码在抓取 Tab 验收（建议影子库导入）
+
+### 下一步建议
+
+1. **重启后端**（否则仍跑旧代码）
+2. eeo Store「ご注文履歴詳細」→查看网页源代码→整页粘贴
+3. 核对注文番号 / 运费 / 合计 / 各 SKU 数量与单价 / JAN（若邮件区有商品コード）
+
+### 关键文件
+
+- `backend/app/scrapers/eeo.py`
+- `backend/app/scrapers/templates/eeo.today.order-history-detail.fixture.html`
+- `backend/test_eeo_order.py`
+- `backend/app/scrapers/preview.py`
+- `frontend/src/App.tsx` / `frontend/src/scrapePaste.ts`
+
+---
+
+## Handoff - 2026-09-13 (animate 注文履歴)
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — animate-onlineshop.jp（アニメイト通販）「注文履歴」HTML 粘贴导入
+
+### 已完成
+
+- `animate.py`：识别/解析 `.order_item`、注文番号、配送料・手数料、注文合計金額；行内金额按小计÷点数得单价；跳过 `.order_item_privilege`；按 pid 合并数量
+- 接入 `preview.scrape_html_document`（cystore 订单分支之后）
+- 前端抓取提示 + `scrapePaste` 的 `animate:product:{pd}`
+- fixture + `test_animate_order.py`；版本 **0.9.26**
+
+### 未完成
+
+- 用户用真实整页源代码在抓取 Tab 验收（建议影子库导入）
+
+### 下一步建议
+
+1. **重启后端**（否则仍跑旧代码）
+2. アニメイト「注文履歴」→查看网页源代码→整页粘贴
+3. 核对注文番号 / 运费 / 合计 / 各 SKU 数量与单价（单价=小计÷点数）
+
+### 关键文件
+
+- `backend/app/scrapers/animate.py`
+- `backend/app/scrapers/templates/animate-onlineshop.jp.order-history.fixture.html`
+- `backend/test_animate_order.py`
+- `backend/app/scrapers/preview.py`
+- `frontend/src/App.tsx` / `frontend/src/scrapePaste.ts`
+
+---
+
+## Handoff - 2026-09-13 (字符半角约束)
+
+### 当前任务
+
+协作规则：所有代码侧字符统一英文半角格式
+
+### 已完成
+
+- `.cursor/rules/important-constraints.mdc` 增加「字符格式：统一用英文半角」
+- `AGENTS.md` Safety Rules 同步
+- 版本 **0.9.25**
+
+### 要点
+
+- 代码/配置/路径/正则/键名：半角 `()[]{}:;,."'`
+- 中日文正文可保留；标点优先半角
+- 抓取匹配外部页面原文时保留站点全角
+
+---
+
+## Handoff - 2026-09-13 (cystore 購入履歴詳細)
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — cystore.com（CyStore）「購入履歴詳細」HTML 粘贴导入
+
+### 已完成
+
+- `cystore.py`：识别/解析订单行、ご注文番号、配送料金、総合計；图路径取 product_id；兼容 `clas="cartitem__name"`；按 pid 合并数量
+- 接入 `preview.scrape_html_document`（sofmap 订单分支之后）
+- 前端抓取提示 + `scrapePaste` 的 `cystore:product:{pid}`
+- fixture + `test_cystore_order.py`；版本 **0.9.24**
+
+### 未完成
+
+- 用户用真实整页源代码在抓取 Tab 验收
+
+### 下一步建议
+
+1. **重启后端**（否则仍跑旧代码）
+2. CyStore「購入履歴詳細」→查看网页源代码→整页粘贴
+3. 核对注文番号 / 运费 / 合计 / 各 SKU 数量
+
+### 关键文件
+
+- `backend/app/scrapers/cystore.py`
+- `backend/app/scrapers/preview.py`
+- `backend/test_cystore_order.py`
+- `frontend/src/App.tsx`
+- `frontend/src/scrapePaste.ts`
+
+### 不要做
+
+- 不要期望订单页带出 JAN（通常没有）
+- 不要把订单页误走单商品 PDP 解析
+
+---
+
+## Handoff - 2026-09-13 (sofmap 订单详情)
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — sofmap「お取引の詳細」HTML 粘贴导入
+
+### 已完成
+
+- `sofmap.py`：订单行/注文番号/送料/合计；图 URL JAN；按 SKU 合并
+- 接入 `scrape_html_document`；前端 `scrapeProductMatchKey` 按 sku 匹配
+- `test_sofmap_order.py`；版本 **0.9.23**
+
+### 未完成
+
+- 用户用真实整页源代码在抓取 Tab 验收
+
+### 下一步建议
+
+- 粘贴「お取引の詳細」源码，确认 5 行、数量 70、JAN、运费 0、注文番号自动填入
+
+### 关键文件
+
+- `backend/app/scrapers/sofmap.py`
+- `backend/app/scrapers/preview.py`
+- `backend/test_sofmap_order.py`
+- `frontend/src/scrapePaste.ts`
+- `frontend/src/App.tsx`
+
+### 不要做
+
+- 不要把订单页误走单商品 PDP 解析
+
+---
+
+## Handoff - 2026-09-13 (sofmap 商品页)
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — sofmap.com 商品详情页抓取
+
+### 已完成
+
+- `backend/app/scrapers/sofmap.py`：解析品名/特价/JANコード/商品图/发售日；shop 归一 sofmap.com
+- 接入 `scrape_url` / `scrape_html_document`；忽略站点 OGP
+- fixture + `test_sofmap_product.py`；版本 **0.9.22**
+
+### 未完成
+
+- 用户用真实商品 URL 在抓取 Tab 验收
+
+### 下一步建议
+
+- 粘贴 `https://a.sofmap.com/product_detail.aspx?sku=102018397` 确认 JAN/图/价格
+
+### 关键文件
+
+- `backend/app/scrapers/sofmap.py`
+- `backend/app/scrapers/preview.py`
+- `backend/test_sofmap_product.py`
+- `frontend/src/App.tsx`（提示文案）
+
+### 不要做
+
+- 不要在未要求时做 sofmap 订单页解析
+
+---
+
+## Handoff - 2026-09-13 (JAN 回填)
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — 订单后再抓商品页自动回填 JAN
+
+### 已完成
+
+- `scrapeProductMatchKey`：vvstore `/products/detail/{id}` 按商品 ID 匹配订单行与 PDP
+- `appendScrapeProducts`：同 key 且原行无条码时回填 JAN（不覆盖已有）
+- 抓取完成提示含「回填 JAN N 条」；版本 **0.9.21**
+
+### 未完成
+
+- 用户用真实流程验收：先粘贴注文詳細 → 再批量粘贴商品详情 URL
+
+### 下一步建议
+
+- 验收：清单 JAN 列应自动填入；已有 JAN 不被覆盖
+
+### 关键文件
+
+- `frontend/src/scrapePaste.ts`（`scrapeProductMatchKey`）
+- `frontend/src/App.tsx`（`appendScrapeProducts`）
+
+### 不要做
+
+- 不要在订单 HTML 解析里硬造 JAN
+- 不要自动替用户请求全部商品页（当前是用户再粘贴/再抓）
+
+---
+
+## Handoff - 2026-09-13
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — vvstore.jp ご注文履歴詳細 HTML 粘贴导入
+
+### 已完成
+
+- `backend/app/scrapers/vvstore.py`：解析品名/单价/数量/图/注文番号/运费；同商品 URL 合并数量
+- 接入 `scrape_html_document`；抓取 Tab 提示
+- `test_vvstore_order.py` 通过；版本 **0.9.20**
+- 本页无 JAN（已告知用户）
+
+### 未完成
+
+- 用户用真实「ご注文履歴詳細」整页源代码验收
+- ~~（可选）商品详情页补 JAN~~ → 见上方 0.9.21 Handoff
+
+### 下一步建议
+
+- 用户粘贴整页源代码验收；确认注文番号/运费是否自动填入抓取表单
+
+### 关键文件
+
+- `backend/app/scrapers/vvstore.py`
+- `backend/app/scrapers/preview.py`
+- `backend/test_vvstore_order.py`
+- `frontend/src/App.tsx`
+
+### 需要特别注意
+
+- vvstore 详情页是 SSR，一般用「查看网页源代码」即可
+- 生产库禁止写测试订单
+
+### 不要做
+
+- （已由用户请求落地）vvstore 商品详情补 JAN 见 0.9.21
+
+---
+
+## Handoff - 2026-09-12
+
+### 当前任务
+
+FEATURE: ORDER_IMPORT — &mall 注文履歴粘贴导入（HTML / Elements / Network JSON）
+
+### 已完成
+
+- `andmall.py`：HTML + Elements 片段 + `shop-order-skus` JSON（可多页粘贴合并）
+- 说明：Ctrl+U「查看网页源代码」点もっと見る后**不会变**（仅 SSR）
+- 样例 HTML 10 行 → 4 种；JSON 多页合并测试通过
+- 版本 **0.9.19**（HTML 片段误当 URL → Invalid IPv6 已修；粘贴后按钮应为「解析 HTML」）
+
+### 未完成
+
+- 用户用 Elements / Network 粘贴完整 29 件验收
+- 列表页无单价/JAN
+
+### 下一步建议
+
+- 用户按 Elements 或 Network 方式粘贴后验收
+
+### 关键文件
+
+- `backend/app/scrapers/andmall.py`
+- `backend/app/scrapers/preview.py`
+- `backend/app/scrapers/templates/mitsui-shopping-park.com.order-history.md`
+- `backend/test_andmall_order.py`
+
+### 需要特别注意
+
+- 不要教用户再靠「查看网页源代码」拿もっと見る后的内容
+- 生产库禁止写测试订单
+
+### 不要做
+
+- 未验收前不要扩大到其它三井页面
 
 ---
 
@@ -249,6 +552,57 @@ FEATURE: XXXXX
 - 不要拆 `App.tsx` / `api.ts` / `main.py`
 - 不要把文档/导航规划描述成已实现的产品功能；当前未提交内容是文档与导航注释，无业务逻辑 / API / 数据库变更
 - 不要在用户明确要求前执行 git commit
+
+---
+
+## 2026-09-12
+
+### FEATURE: ORDER_IMPORT — &mall もっと見る / Elements / JSON（0.9.18）
+
+#### 修改内容
+
+- 澄清：Ctrl+U 只反映 SSR，点もっと見る后源码不变
+- 支持 Elements outerHTML 片段、Network JSON（可多段粘贴合并）
+- 不全页计数时改提示用 Elements / Network，不再说「再复制源代码」
+
+#### 原因
+
+用户点了もっと見る但「查看网页源代码」仍是 10/29。
+
+---
+
+### FEATURE: ORDER_IMPORT — &mall 注文履歴
+
+#### 修改内容
+
+- 新增 `andmall.py`：识别 mitsui-shopping-park 注文履歴 DOM，解析品名/数量/图/mallSkuId
+- 相同 mallSkuId（其次色番）合并数量；从品名提取 `YYYY-MM` 发货月
+- `scrape_html_document` 优先走该解析；前端抓取说明补一行
+
+#### 涉及文件
+
+- `backend/app/scrapers/andmall.py`
+- `backend/app/scrapers/preview.py`
+- `backend/app/scrapers/templates/mitsui-shopping-park.com.order-history.md`
+- `backend/test_andmall_order.py`
+- `frontend/src/App.tsx`（提示文案）
+
+#### 原因
+
+用户订单履历里同款多行下单，导入时需要自动合并数量，避免手工累加。
+
+#### 用户确认
+
+- 用户要求「做一个吧，重复商品自动合并」；单元测试已用其样例 HTML 验证，待页面粘贴验收。
+
+#### 影响范围
+
+- 仅 HTML 粘贴抓取路径；不影响 URL 抓取其它站点
+
+#### 风险
+
+- 「もっと見る」未点时只解析当前页已渲染行
+- 无单价/JAN
 
 ---
 

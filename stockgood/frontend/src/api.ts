@@ -411,10 +411,10 @@ export function scrapeUrl(url: string, html?: string) {
 }
 
 // FEATURE: ORDER_REQUEST — 公开抓取（顾客申请页）
-export function publicScrapeUrl(url: string) {
+export function publicScrapeUrl(url: string, html?: string) {
   return request<ScrapeResult>("/api/public/scrape", {
     method: "POST",
-    body: JSON.stringify({ url }),
+    body: JSON.stringify(html ? { url, html } : { url }),
   });
 }
 

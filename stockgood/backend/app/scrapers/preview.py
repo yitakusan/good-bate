@@ -764,6 +764,34 @@ def parse_product_html(html: str, page_url: str = "") -> Optional[dict[str, Any]
 
 
 async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any]:
+    from app.scrapers.andmall import (
+        detect_andmall_page_counts,
+        is_andmall_order_history_html,
+        looks_like_andmall_order_json,
+        parse_andmall_order_history_lines,
+        parse_andmall_order_skus_json,
+        parse_andmall_order_payload,
+    )
+    from app.scrapers.vvstore import (
+        is_vvstore_order_detail_html,
+        parse_vvstore_order_detail_html,
+    )
+    from app.scrapers.sofmap import (
+        is_sofmap_order_detail_html,
+        parse_sofmap_order_detail_html,
+    )
+    from app.scrapers.cystore import (
+        is_cystore_order_detail_html,
+        parse_cystore_order_detail_html,
+    )
+    from app.scrapers.animate import (
+        is_animate_order_history_html,
+        parse_animate_order_history_html,
+    )
+    from app.scrapers.eeo import (
+        is_eeo_order_detail_html,
+        parse_eeo_order_detail_html,
+    )
     from app.scrapers.zozo import (
         gone_message,
         html_looks_gone,
@@ -773,6 +801,223 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
         orders_to_scrape_products,
         parse_zozo_order_detail_html,
     )
+
+    # vvstore.jp ご注文履歴詳細 — multi-line order with unit price + shipping.
+    if is_vvstore_order_detail_html(html):
+        parsed = parse_vvstore_order_detail_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 vvstore.jp（ヴィレッジヴァンガード）订单详情页，但未能解析出商品。"
+                "请确认复制的是「ご注文履歴詳細」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "订单详情"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 vvstore {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # sofmap.com お取引の詳細 — multi-line order; JAN often in product image URL.
+    if is_sofmap_order_detail_html(html):
+        parsed = parse_sofmap_order_detail_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 sofmap.com（アキバ☆ソフマップ）订单详情页，但未能解析出商品。"
+                "请确认复制的是「お取引の詳細」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "订单详情"
+        jan_n = sum(1 for p in products if (p.get("barcode") or "").strip())
+        jan_text = f"，已从图片识别 JAN {jan_n} 条" if jan_n else ""
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 sofmap {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}{jan_text}），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # cystore.com（CyStore）購入履歴詳細 — multi-line order; usually no JAN on order page.
+    if is_cystore_order_detail_html(html):
+        parsed = parse_cystore_order_detail_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 cystore.com（CyStore）订单详情页，但未能解析出商品。"
+                "请确认复制的是「購入履歴詳細」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "订单详情"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 CyStore {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；订单页通常无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # animate-onlineshop.jp（アニメイト通販）注文履歴 — multi-line; line yen is subtotal.
+    if is_animate_order_history_html(html):
+        parsed = parse_animate_order_history_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 animate-onlineshop.jp（アニメイト通販）注文履歴，但未能解析出商品。"
+                "请确认复制的是マイページ「注文履歴」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文履歴"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 アニメイト {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；订单页通常无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # eeo.today（eeo Store）ご注文履歴詳細 — multi-line; mail body may include JAN.
+    if is_eeo_order_detail_html(html):
+        parsed = parse_eeo_order_detail_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 eeo.today（eeo Store）ご注文履歴詳細，但未能解析出商品。"
+                "请确认复制的是マイページ「ご注文履歴詳細」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文详情"
+        jan_n = sum(1 for p in products if (p.get("barcode") or "").strip())
+        jan_text = f"，已回填 JAN {jan_n} 种" if jan_n else "；主列表通常无 JAN（邮件正文有商品コード时可回填）"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 eeo Store {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}{jan_text}），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # &mall（mitsui-shopping-park）注文履歴 — HTML / Elements / Network JSON。
+    if looks_like_andmall_order_json(html) or is_andmall_order_history_html(html):
+        products, source_kind = parse_andmall_order_payload(html)
+        if source_kind == "json":
+            raw_lines = parse_andmall_order_skus_json(html)
+        else:
+            raw_lines = parse_andmall_order_history_lines(html)
+        if not products:
+            raise ValueError(
+                "检测到 &mall（mitsui-shopping-park）注文履歴，但未能解析出商品。"
+                "请粘贴：① Elements 里加载后的列表 outerHTML，或 "
+                "② Network 中 shop-order-skus 的 JSON 响应。"
+                "（「查看网页源代码」点もっと見る后不会变，仍是首屏。）"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        merged_n = len(products)
+        raw_n = len(raw_lines)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        shown, total = detect_andmall_page_counts(html)
+        page_note = ""
+        # Only warn when SSR/page counter says incomplete AND we still have few rows.
+        if (
+            source_kind == "html"
+            and shown is not None
+            and total is not None
+            and shown < total
+            and raw_n < total
+        ):
+            page_note = (
+                f"；粘贴内容仅含 {shown}/{total} 件（「查看网页源代码」不含もっと見る结果）。"
+                f"请改用：F12 → Elements 选中商品列表 → Copy outerHTML；"
+                f"或 Network 打开 shop-order-skus → Copy response"
+            )
+        source_label = "JSON" if source_kind == "json" else "注文履歴"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 &mall {source_label}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}）{page_note}，请核对后导入"
+            ),
+            "order_ref": "",
+            "shipping_fee": None,
+            "order_total": None,
+        }
 
     # ZOZO 注文内容の詳細 — import as multi-line order (preferred over PDP parse).
     if is_zozo_order_detail_html(html):
@@ -816,6 +1061,11 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
         looks_like_miraithings_html,
         parse_miraithings_product_html,
     )
+    from app.scrapers.sofmap import (
+        is_sofmap_url,
+        looks_like_sofmap_html,
+        parse_sofmap_product_html,
+    )
 
     if is_miraithings_url(page_hint) or looks_like_miraithings_html(html):
         product = parse_miraithings_product_html(html, page_hint or "https://miraithings.com/")
@@ -825,6 +1075,23 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
                 "products": [product],
                 "message": "已从 miraithings.com 页面源码解析 1 件（主价 p.item-price span）",
             }
+
+    if is_sofmap_url(page_hint) or looks_like_sofmap_html(html):
+        # Order detail must not fall through to single-product parser.
+        from app.scrapers.sofmap import is_sofmap_order_detail_html
+
+        if is_sofmap_order_detail_html(html):
+            pass  # handled earlier; keep for safety if import order changes
+        else:
+            product = parse_sofmap_product_html(
+                html, page_hint or "https://a.sofmap.com/"
+            )
+            if product and product.get("name"):
+                return {
+                    "kind": "list",
+                    "products": [product],
+                    "message": "已从 sofmap.com 商品页源码解析 1 件（JANコード / JSON-LD）",
+                }
 
     if html_looks_gone(html) and (
         is_zozo_url(page_hint) or "zozo.jp" in (html[:4000].lower())
@@ -856,6 +1123,10 @@ async def scrape_url(url: str) -> dict[str, Any]:
         is_miraithings_url,
         parse_miraithings_product_html,
     )
+    from app.scrapers.sofmap import (
+        is_sofmap_product_url,
+        parse_sofmap_product_html,
+    )
     from app.scrapers.zozo import blocked_message, is_zozo_url
 
     if is_1999_url(url):
@@ -881,6 +1152,19 @@ async def scrape_url(url: str) -> dict[str, Any]:
                             "kind": "list",
                             "products": [product],
                             "message": "已从 miraithings.com 商品页抓取 1 件（主价 p.item-price span）",
+                        }
+            except Exception:
+                pass
+        if is_sofmap_product_url(url):
+            try:
+                resp = await _fetch(client, url)
+                if resp.status_code == 200:
+                    product = parse_sofmap_product_html(resp.text, str(resp.url))
+                    if product and product.get("name"):
+                        return {
+                            "kind": "list",
+                            "products": [product],
+                            "message": "已从 sofmap.com 商品页抓取 1 件（含 JANコード）",
                         }
             except Exception:
                 pass

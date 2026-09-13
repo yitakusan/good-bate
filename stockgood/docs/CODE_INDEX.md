@@ -272,7 +272,8 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 前端
 
-- `frontend/src/App.tsx`（`tab === "scrape"`）
+- `frontend/src/App.tsx`（`tab === "scrape"`；`appendScrapeProducts` 同商品可回填 JAN）
+- `frontend/src/scrapePaste.ts`（HTML/JSON 粘贴识别、`scrapeProductMatchKey`）
 - `frontend/src/scrapeDelay.ts`
 - `frontend/src/api.ts`：`scrapeUrl`、`createItemsBatch`
 
@@ -283,14 +284,27 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 后端实现
 
-- `backend/app/scrapers/preview.py`（`scrape_url`、`scrape_html_document`）
-- `backend/app/scrapers/*.py`（站点特化：zozo、hmv、hobbysearch 等）
+- `backend/app/scrapers/preview.py`（`scrape_url`、`scrape_html_document`；商品页通用 `extract_jan_from_html`）
+- `backend/app/scrapers/*.py`（站点特化：zozo、andmall/&mall、vvstore、sofmap、cystore、animate、eeo、hmv、hobbysearch 等）
+  - &mall：整页 SSR HTML、Elements 列表 outerHTML、Network `shop-order-skus` JSON；相同 SKU 合并数量。Ctrl+U 不含もっと見る结果。
+  - vvstore：ご注文履歴詳細整页 HTML；含单价/数量/运费/注文番号，无 JAN；相同商品 URL 合并数量。订单后再抓 `/products/detail/{id}` 商品页，前端按商品 ID 回填 JAN。
+  - sofmap：`product_detail.aspx?sku=` 商品页；JANコード / JSON-LD。另支持「お取引の詳細」订单 HTML（数量/运费/注文番号；图 URL 常含 JAN）；前端按 sku 匹配。
+  - cystore：購入履歴詳細整页 HTML；含单价/数量/运费/注文番号；订单页通常无 JAN；商品 ID 取自图片路径；相同 pid 合并数量。
+  - animate：注文履歴整页 HTML；行内金额为小计（单价=小计÷点数）；含运费/注文番号；跳过特典；商品 ID 取自 `/pd/{id}/`；相同 pid 合并数量。
+  - eeo：ご注文履歴詳細整页 HTML；含单价/数量/运费/注文番号；邮件正文商品コード可回填 JAN；商品 ID 取自 `/products/detail/{id}`；相同 pid 合并数量。
 - `backend/app/services/items.py`：`create_items_batch`
 
 ### 测试
 
 - `backend/test_retailer_scrapers.py`
 - `backend/test_zozo_order.py`
+- `backend/test_andmall_order.py`
+- `backend/test_vvstore_order.py`
+- `backend/test_sofmap_product.py`
+- `backend/test_sofmap_order.py`
+- `backend/test_cystore_order.py`
+- `backend/test_animate_order.py`
+- `backend/test_eeo_order.py`
 
 ### 依赖关系
 
@@ -724,7 +738,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 ### 后端实现
 
 - `backend/app/tunnel_status.py`
-- `scripts/run-tunnel.ps1`、`start-tunnel.bat`
+- `scripts/run-tunnel.ps1`、`启动隧道.bat`
 
 ### 文档
 
@@ -815,11 +829,18 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 | `backend/tests/test_exports.py` | INV / 费用明细模板契约 |
 | `backend/test_retailer_scrapers.py` | ORDER_IMPORT |
 | `backend/test_zozo_order.py` | ORDER_IMPORT |
+| `backend/test_andmall_order.py` | ORDER_IMPORT |
+| `backend/test_vvstore_order.py` | ORDER_IMPORT |
+| `backend/test_sofmap_product.py` | ORDER_IMPORT |
+| `backend/test_sofmap_order.py` | ORDER_IMPORT |
+| `backend/test_cystore_order.py` | ORDER_IMPORT |
+| `backend/test_animate_order.py` | ORDER_IMPORT |
+| `backend/test_eeo_order.py` | ORDER_IMPORT |
 | `backend/_smoke_finance.py` | FINANCE 影子库冒烟 |
 | `backend/_smoke_product_kind.py` | SYSTEM / 种类 |
 | `backend/_smoke_add_to_box.py` | INVENTORY |
 | `scripts/gen-api-types.py` | OpenAPI → `frontend/src/api-types.generated.ts` |
-| `start.bat` / `start-shadow.bat` / `stop.bat` | 启停 |
+| `启动.bat` / `启动影子库.bat` / `停止.bat` | 启停 |
 | `scripts/start-bg.ps1` | 后台起前后端 |
 | `scripts/backup-db.ps1` | SQLite 备份 |
 | `scripts/tray_app.py` | 托盘 |

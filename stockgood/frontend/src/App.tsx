@@ -13,6 +13,12 @@ import { FormEvent, useEffect, useLayoutEffect, useMemo, useRef, useState } from
 
 import AuthPanel from "./AuthPanel";
 import {
+  looksLikeHtmlOrJsonPaste,
+  normalizeHtmlPaste,
+  parseScrapeUrls,
+  scrapeProductMatchKey,
+} from "./scrapePaste";
+import {
   ActionLog,
   AppMeta,
   ApplyReport,
@@ -995,115 +1001,129 @@ export default function App() {
     }
   }
 
-  function looksLikeHtmlDocument(raw: string): boolean {
-    const text = raw.trim();
-    if (text.length < 200) return false;
-    const lower = text.slice(0, 4000).toLowerCase();
-    return (
-      lower.startsWith("<!doctype html") ||
-      lower.startsWith("<html") ||
-      (lower.includes("<html") && lower.includes("</html")) ||
-      (lower.includes("<head") && lower.includes("<body") && lower.includes("og:title"))
-    );
-  }
-
-  function parseScrapeUrls(raw: string): string[] {
-    const seen = new Set<string>();
-    const urls: string[] = [];
-    for (const part of raw.split(/[\n\r,;\t]+/)) {
-      let text = part.trim();
-      if (!text) continue;
-      // allow "1. https://..." / "- https://..."
-      text = text.replace(/^\d+[\.\)、]\s*/, "").replace(/^[-*•]\s*/, "");
-      if (!/^https?:\/\//i.test(text) && text.includes(".")) {
-        text = `https://${text}`;
-      }
-      if (!/^https?:\/\//i.test(text)) continue;
-      const key = text.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      urls.push(text);
-    }
-    return urls;
-  }
-
   function appendScrapeProducts(
     products: ScrapeProduct[],
     existing: ScrapeProduct[],
   ) {
-    if (!products.length) return { next: existing, added: [] as ScrapeProduct[] };
-    const seen = new Set(
-      existing.map((p) => (p.source_url || p.name).trim().toLowerCase()),
-    );
-    const added: ScrapeProduct[] = [];
-    for (const product of products) {
-      const key = (product.source_url || product.name).trim().toLowerCase();
-      if (key && seen.has(key)) continue;
-      if (key) seen.add(key);
-      added.push(product);
+    if (!products.length) {
+      return { next: existing, added: [] as ScrapeProduct[], janFilled: 0 };
     }
-    if (!added.length) return { next: existing, added };
-    const base = existing.length;
-    const next = [...existing, ...added];
-    const newIndexes = added.map((_, i) => base + i);
+
+    const next = existing.map((p) => ({ ...p }));
+    const keyToIndex = new Map<string, number>();
+    for (let i = 0; i < next.length; i += 1) {
+      const k = scrapeProductMatchKey(next[i]);
+      if (k && !keyToIndex.has(k)) keyToIndex.set(k, i);
+    }
+
+    const added: ScrapeProduct[] = [];
+    const newIndexes: number[] = [];
+    const janUpdates: { index: number; barcode: string }[] = [];
+
+    for (const product of products) {
+      const key = scrapeProductMatchKey(product);
+      const incomingBarcode = (product.barcode || "").trim();
+
+      if (key && keyToIndex.has(key)) {
+        const idx = keyToIndex.get(key)!;
+        const cur = next[idx];
+        const existingBarcode =
+          (cur.barcode || "").trim() || (collectionBarcode[idx] || "").trim();
+        if (incomingBarcode && !existingBarcode) {
+          next[idx] = { ...cur, barcode: incomingBarcode };
+          janUpdates.push({ index: idx, barcode: incomingBarcode });
+        }
+        continue;
+      }
+
+      const index = next.length;
+      next.push(product);
+      added.push(product);
+      newIndexes.push(index);
+      if (key) keyToIndex.set(key, index);
+    }
+
+    const janFilled = janUpdates.length;
+    if (!added.length && !janFilled) {
+      return { next: existing, added, janFilled: 0 };
+    }
+
     setCollection(next);
-    setCollectionPick((pick) => [...pick, ...newIndexes]);
-    setCollectionQty((qtyMap) => {
-      const copy = { ...qtyMap };
-      for (const index of newIndexes) {
-        const product = next[index];
-        const fromProduct =
-          product.qty != null && product.qty >= 1 ? String(product.qty) : "";
-        copy[index] = copy[index] || fromProduct || "1";
-      }
-      return copy;
-    });
-    setCollectionPrice((priceMap) => {
-      const copy = { ...priceMap };
-      for (const index of newIndexes) {
-        const product = next[index];
-        copy[index] =
-          copy[index] ||
-          (product.unit_cost != null ? String(product.unit_cost) : "");
-      }
-      return copy;
-    });
-    setCollectionBarcode((barcodeMap) => {
-      const copy = { ...barcodeMap };
-      for (const index of newIndexes) {
-        const product = next[index];
-        copy[index] = copy[index] || (product.barcode || "").trim();
-      }
-      return copy;
-    });
+
+    if (newIndexes.length) {
+      setCollectionPick((pick) => [...pick, ...newIndexes]);
+      setCollectionQty((qtyMap) => {
+        const copy = { ...qtyMap };
+        for (const index of newIndexes) {
+          const product = next[index];
+          const fromProduct =
+            product.qty != null && product.qty >= 1 ? String(product.qty) : "";
+          copy[index] = copy[index] || fromProduct || "1";
+        }
+        return copy;
+      });
+      setCollectionPrice((priceMap) => {
+        const copy = { ...priceMap };
+        for (const index of newIndexes) {
+          const product = next[index];
+          copy[index] =
+            copy[index] ||
+            (product.unit_cost != null ? String(product.unit_cost) : "");
+        }
+        return copy;
+      });
+    }
+
+    if (newIndexes.length || janUpdates.length) {
+      setCollectionBarcode((barcodeMap) => {
+        const copy = { ...barcodeMap };
+        for (const { index, barcode } of janUpdates) {
+          if (!(copy[index] || "").trim()) {
+            copy[index] = barcode;
+          }
+        }
+        for (const index of newIndexes) {
+          const product = next[index];
+          copy[index] = copy[index] || (product.barcode || "").trim();
+        }
+        return copy;
+      });
+    }
+
     const withShip = products.find((product) => product.expected_ship_at);
     if (withShip?.expected_ship_at && !batchExpectedShip) {
       setBatchExpectedShip(withShip.expected_ship_at);
       setBatchExpectedPeriod(withShip.expected_ship_period || "");
     }
-    return { next, added };
+    return { next, added, janFilled };
   }
 
   async function onScrape() {
     const raw = scrapeUrlValue;
-    if (looksLikeHtmlDocument(raw)) {
+    if (looksLikeHtmlOrJsonPaste(raw)) {
+      const html = normalizeHtmlPaste(raw);
       setScrapeBusy(true);
       setError("");
-      setMessage("正在解析粘贴的页面 HTML…");
+      setMessage("正在解析粘贴的页面 HTML / JSON…");
       try {
-        const result = await scrapeUrl("", raw);
-        const { added } = appendScrapeProducts(result.products || [], collection);
+        const result = await scrapeUrl("", html);
+        const { added, janFilled } = appendScrapeProducts(
+          result.products || [],
+          collection,
+        );
         if (result.order_ref?.trim()) {
           setScrapeOrderRef(result.order_ref.trim());
         }
         if (result.shipping_fee != null && !Number.isNaN(Number(result.shipping_fee))) {
           setScrapeShippingFee(String(result.shipping_fee));
         }
+        const janText = janFilled > 0 ? `，回填 JAN ${janFilled} 条` : "";
         setMessage(
-          result.message ||
-            `已从 HTML 解析，新增 ${added.length} 条商品`,
+          result.message
+            ? `${result.message}${janText}`
+            : `已从 HTML 解析，新增 ${added.length} 条商品${janText}`,
         );
-        if (added.length) setScrapeUrlValue("");
+        if (added.length || janFilled) setScrapeUrlValue("");
       } catch (err) {
         setError(errorText(err));
       } finally {
@@ -1115,7 +1135,7 @@ export default function App() {
     const urls = parseScrapeUrls(raw);
     if (!urls.length) {
       setError(
-        "请粘贴网址（每行一个），或粘贴浏览器「查看网页源代码」的整页 HTML（zozo.jp 等被拦截站点用）",
+        "请粘贴网址（每行一个），或粘贴 F12→Elements 的列表 outerHTML / Network JSON（&mall），或整页源代码（zozo.jp 等）",
       );
       return;
     }
@@ -1123,6 +1143,7 @@ export default function App() {
     setError("");
     setMessage("");
     let addedTotal = 0;
+    let janFilledTotal = 0;
     let ok = 0;
     let working = collection;
     const failures: string[] = [];
@@ -1144,12 +1165,13 @@ export default function App() {
         try {
           const result = await scrapeUrl(url);
           ok += 1;
-          const { next, added } = appendScrapeProducts(
+          const { next, added, janFilled } = appendScrapeProducts(
             result.products || [],
             working,
           );
           working = next;
           addedTotal += added.length;
+          janFilledTotal += janFilled;
         } catch (err) {
           failures.push(`${url} → ${errorText(err)}`);
           previousFailed = true;
@@ -1158,8 +1180,10 @@ export default function App() {
       const failText = failures.length
         ? `；失败 ${failures.length} 条`
         : "";
+      const janText =
+        janFilledTotal > 0 ? `，回填 JAN ${janFilledTotal} 条` : "";
       setMessage(
-        `抓取完成：成功 ${ok}/${urls.length} 个链接，新增 ${addedTotal} 条商品${failText}`,
+        `抓取完成：成功 ${ok}/${urls.length} 个链接，新增 ${addedTotal} 条商品${janText}${failText}`,
       );
       if (failures.length) {
         setError(failures.slice(0, 5).join("\n"));
@@ -3293,23 +3317,29 @@ export default function App() {
           <p className="muted">
             支持批量粘贴多个商品/系列/店铺链接（每行一个，也可用逗号分隔）。
             zozo.jp：商品页或「注文内容の詳細」整页源代码可粘贴抓取（订单列表页请改开详情）。
+            &mall（mitsui-shopping-park）：不要用「查看网页源代码」；F12→Elements 复制 `ul.order-history-list` 的 outerHTML（点完もっと見る后），或 Network→shop-order-skus 的 JSON。按钮应变为「解析 HTML」。相同商品自动合并数量。
+            vvstore.jp：打开「ご注文履歴詳細」→查看网页源代码整页粘贴；含单价/数量/运费/注文番号，无 JAN。相同商品自动合并数量。订单导入后可再粘贴商品详情页链接（如 /products/detail/…），会按同一商品自动回填 JAN。
+            sofmap.com（アキバ☆ソフマップ）：商品页链接（product_detail.aspx?sku=…）可抓取品名/特价/JAN/图/发售日；「お取引の詳細」整页源代码可粘贴导入订单（含数量/运费/注文番号；图 URL 常含 JAN）。
+            cystore.com（CyStore）：打开「購入履歴詳細」→查看网页源代码整页粘贴；含单价/数量/运费/注文番号，订单页通常无 JAN。相同商品自动合并数量。
+            animate-onlineshop.jp（アニメイト通販）：打开マイページ「注文履歴」→查看网页源代码整页粘贴；行内金额为小计（入库单价=小计÷点数）；含运费/注文番号；特典行跳过；订单页通常无 JAN。相同商品自动合并数量。
+            eeo.today（eeo Store）：打开マイページ「ご注文履歴詳細」→查看网页源代码整页粘贴；含单价/数量/运费/注文番号；邮件正文有商品コード时可回填 JAN。相同商品自动合并数量。
             结果会累加到同一清单；勾选后点「导入为一笔订单」。
           </p>
           <div className="scrape-bar scrape-bar-batch">
             <label className="grow">
-              URL 列表 / 页面 HTML
+              URL 列表 / HTML 片段 / JSON
               <textarea
                 rows={5}
                 value={scrapeUrlValue}
                 onChange={(e) => setScrapeUrlValue(e.target.value)}
-                placeholder={"每行一个链接，或粘贴整页 HTML（zozo 等）\nhttps://jumpcs.shueisha.co.jp/shop/g/g4530430540549/\nhttps://animegood.shop/products/xxx"}
+                placeholder={"每行一个链接，或粘贴 Elements outerHTML / Network JSON\nhttps://jumpcs.shueisha.co.jp/shop/g/g4530430540549/\nhttps://animegood.shop/products/xxx"}
               />
             </label>
             <div className="scrape-actions">
               <button type="button" className="btn btn-primary" disabled={scrapeBusy} onClick={() => void onScrape()}>
                 {scrapeBusy
                   ? "抓取中…"
-                  : looksLikeHtmlDocument(scrapeUrlValue)
+                  : looksLikeHtmlOrJsonPaste(scrapeUrlValue)
                     ? "解析 HTML"
                     : `批量抓取（${parseScrapeUrls(scrapeUrlValue).length || 0}）`}
               </button>
