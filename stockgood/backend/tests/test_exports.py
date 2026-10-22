@@ -8,7 +8,7 @@ from pathlib import Path
 
 from openpyxl import load_workbook
 
-from app.database import DATA_DIR
+from app.database import DATA_DIR, get_conn
 from app.services import outbound_batches as outbound_svc
 from app.services.inv_template import (
     CONSIGNEE_EN,
@@ -125,6 +125,92 @@ class ExportTemplateContractTests(IsolatedDbTestCase):
         self.assertEqual(int(orders_ws.cell(2, 4).value), 3)
 
         self.assertEqual(_sha256(FEE_TEMPLATE), before)
+
+    def test_sf_fills_first_row_consignee_and_does_not_rewrite_template(self) -> None:
+        from app.services.sf_template import (
+            CONSIGNEE,
+            ORIGIN,
+            SPEC,
+            TEMPLATE_PATH as SF_TEMPLATE,
+        )
+
+        before = _sha256(SF_TEMPLATE)
+        order = make_priced_in_stock_order(order_ref="SF-001")
+        with get_conn() as conn:
+            conn.execute(
+                "UPDATE items SET ip = ? WHERE order_id = ? AND barcode = ?",
+                ("TestIP", order["id"], "111"),
+            )
+            conn.execute(
+                "UPDATE items SET ip = ? WHERE order_id = ? AND barcode = ?",
+                ("TestIP", order["id"], "222"),
+            )
+        batch = make_packed_outbound_batch(order, tracking_no="SF-TRK-001")
+        content, filename = outbound_svc.export_sf_xlsx(batch["id"])
+        self.assertEqual(content[:2], b"PK")
+        self.assertTrue(filename.startswith("SF_20260814_FIT"))
+        self.assertTrue(filename.endswith(".xlsx"))
+
+        wb = load_workbook(BytesIO(content))
+        ws = wb.active
+        self.assertEqual(
+            [ws.cell(1, c).value for c in range(1, 17)],
+            [
+                "运单号*",
+                "商品条形码",
+                "商品中文名称*",
+                "品牌*",
+                "産地*",
+                "规格*",
+                "数量*",
+                "单价*",
+                "收件人名称*",
+                "收件人电话*",
+                "收件人国家*",
+                "收件邮编*",
+                "收件省*",
+                "收件市*",
+                "收件县区*",
+                "收件详细地址*",
+            ],
+        )
+        self.assertEqual(ws.cell(2, 1).value, f"FIT{batch['id']}-01")
+        self.assertEqual(ws.cell(2, 2).value, "111")
+        self.assertEqual(ws.cell(2, 3).value, "Item A")
+        self.assertEqual(ws.cell(2, 4).value, "TestIP")
+        self.assertEqual(ws.cell(2, 5).value, ORIGIN)
+        self.assertEqual(ws.cell(2, 6).value, SPEC)
+        self.assertEqual(ws.cell(2, 7).value, 2)
+        self.assertEqual(ws.cell(2, 8).value, "1000.00")
+        self.assertEqual(ws.cell(2, 9).value, CONSIGNEE["name"])
+        self.assertEqual(ws.cell(2, 10).value, CONSIGNEE["phone"])
+        self.assertEqual(ws.cell(2, 14).value, CONSIGNEE["city"])
+        self.assertEqual(ws.cell(2, 16).value, CONSIGNEE["address"])
+        self.assertIsNone(ws.cell(3, 1).value)
+        self.assertEqual(ws.cell(3, 2).value, "222")
+        self.assertIsNone(ws.cell(3, 9).value)
+        self.assertEqual(_sha256(SF_TEMPLATE), before)
+
+    def test_sf_preview_uses_batch_zero_in_filename(self) -> None:
+        order = make_priced_in_stock_order(order_ref="SF-PREVIEW")
+        item_ids = [line["id"] for line in order["lines"]]
+        content, filename = outbound_svc.export_sf_preview_xlsx(
+            {
+                "boxes": [
+                    {
+                        "box_no": 1,
+                        "carrier": "other",
+                        "tracking_no": "-",
+                        "item_ids": item_ids,
+                    }
+                ],
+                "invoice_ship_date": "2026-08-14",
+            }
+        )
+        self.assertEqual(content[:2], b"PK")
+        self.assertIn("FIT0_", filename)
+        wb = load_workbook(BytesIO(content))
+        self.assertEqual(wb.active.cell(2, 1).value, "DRAFT-01")
 
 
 if __name__ == "__main__":

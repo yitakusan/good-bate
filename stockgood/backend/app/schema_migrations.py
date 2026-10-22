@@ -101,6 +101,7 @@ def migrate_ensure_legacy_columns(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "shipments", "width_cm", "REAL")
     _ensure_column(conn, "shipments", "height_cm", "REAL")
     _ensure_column(conn, "outbound_batches", "invoice_ship_date", "TEXT")
+    _ensure_column(conn, "shipments", "freight_jpy", "REAL")
 
 
 def migrate_drop_shipments_tracking_unique(conn: sqlite3.Connection) -> None:
@@ -152,6 +153,12 @@ def migrate_indexes_and_status_cleanup(conn: sqlite3.Connection) -> None:
     )
 
 
+def migrate_shipments_freight_jpy(conn: sqlite3.Connection) -> None:
+    from app.database import _ensure_column
+
+    _ensure_column(conn, "shipments", "freight_jpy", "REAL")
+
+
 def migrate_product_kind_backfill(conn: sqlite3.Connection) -> None:
     from app.product_kind import ProductKindNormalizer
     from app.settings import get_settings
@@ -196,6 +203,7 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("0003_migrate_items_to_orders", migrate_items_to_orders),
     ("0004_indexes_and_status_cleanup", migrate_indexes_and_status_cleanup),
     ("0005_product_kind_backfill", migrate_product_kind_backfill),
+    ("0006_shipments_freight_jpy", migrate_shipments_freight_jpy),
 ]
 
 MIGRATION_NAMES: tuple[str, ...] = tuple(name for name, _ in MIGRATIONS)

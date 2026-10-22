@@ -2,7 +2,7 @@
 // FEATURE: CUSTOMER_PORTAL
 //
 // [功能] 客户个人门户（路由 /me）
-// [用途] 查看自己的申请、确认定金
+// [用途] 查看自己的申请进度、确认定金（与 /apply 同色，控件不并入下单步骤）
 //
 // [页面]
 // frontend/src/MePage.tsx
@@ -94,7 +94,7 @@ export default function MePage() {
 
   if (loading) {
     return (
-      <div className="app apply-app">
+      <div className="apply-page">
         <p className="muted">加载中…</p>
       </div>
     );
@@ -102,15 +102,18 @@ export default function MePage() {
 
   if (!user) {
     return (
-      <div className="app apply-app">
-        <header className="top">
-          <div className="brand">
+      <div className="apply-page">
+        <header className="apply-hero">
+          <div className="apply-hero-main">
+            <p className="apply-brand">Stockgood</p>
             <h1>我的申请</h1>
-            <p className="brand-flow">登录后查看绑定到账号的申请进度</p>
+            <p className="apply-lead">登录后查看绑定到账号的申请进度。</p>
           </div>
-          <p>
-            <a href="/apply">去申请页</a>
-          </p>
+          <div className="apply-account">
+            <a className="apply-account-link" href="/apply">
+              去申请页
+            </a>
+          </div>
         </header>
         <AuthPanel
           title="客户登录"
@@ -124,20 +127,23 @@ export default function MePage() {
   }
 
   return (
-    <div className="app apply-app">
-      <header className="top">
-        <div className="brand">
+    <div className="apply-page">
+      <header className="apply-hero">
+        <div className="apply-hero-main">
+          <p className="apply-brand">Stockgood</p>
           <h1>我的申请</h1>
-          <p className="brand-flow">
+          <p className="apply-lead">
             {user.display_name || user.email} · {user.email}
           </p>
         </div>
-        <div className="me-actions">
-          <a href="/apply">申请下单</a>
+        <div className="apply-account">
+          <a className="apply-account-link" href="/apply">
+            申请下单
+          </a>
         </div>
       </header>
 
-      <div className="panel">
+      <section className="apply-panel">
         <div className="row">
           <label>
             状态
@@ -200,7 +206,7 @@ export default function MePage() {
             ))}
           </ul>
         )}
-      </div>
+      </section>
     </div>
   );
 }

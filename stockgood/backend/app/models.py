@@ -208,6 +208,63 @@ class ScrapeResult(BaseModel):
     order_total: Optional[float] = None
 
 
+# ============================================================
+# FEATURE: RETAILER_CART
+# ============================================================
+class RetailerCartLine(BaseModel):
+    source_url: str = ""
+    qty: int = Field(default=1, ge=1)
+    product_id: str = ""
+    shop: str = ""
+    skip_reason: str = ""
+    variant_id: str = ""
+    name: str = ""
+    image_url: str = ""
+    unit_cost: Optional[float] = None
+
+
+class RetailerCartShop(BaseModel):
+    host: str
+    label: str = ""
+    kind: str = "shopify"
+    tax: str = "inclusive"
+
+
+class RetailerCartParseResult(BaseModel):
+    eligible: list[RetailerCartLine]
+    skipped: list[RetailerCartLine]
+    allowed_hosts: list[str]
+    shops: list[RetailerCartShop] = Field(default_factory=list)
+    message: str = ""
+
+
+class RetailerCartAddRequest(BaseModel):
+    items: list[RetailerCartLine] = Field(min_length=1)
+
+
+class RetailerCartPost(BaseModel):
+    action: str
+    fields: dict[str, str] = Field(default_factory=dict)
+
+
+class RetailerCartShopCart(BaseModel):
+    shop: str
+    label: str = ""
+    kind: str = "shopify"
+    cart_url: str = ""
+    cart_urls: list[str] = Field(default_factory=list)
+    method: str = "get"
+    posts: list[RetailerCartPost] = Field(default_factory=list)
+    items: list[RetailerCartLine] = Field(default_factory=list)
+
+
+class RetailerCartAddResult(BaseModel):
+    cart_url: str = ""
+    carts: list[RetailerCartShopCart] = Field(default_factory=list)
+    message: str = ""
+    items: list[RetailerCartLine]
+
+
 class ItemBatchCreate(BaseModel):
     items: list[ItemCreate] = Field(min_length=1)
 
@@ -272,6 +329,7 @@ class OutboundBoxCreate(BaseModel):
     tracking_no: str = Field(min_length=1)
     note: str = ""
     item_ids: list[int] = Field(min_length=1)
+    freight_jpy: Optional[float] = Field(default=None, ge=0)
     net_weight: Optional[float] = Field(default=None, ge=0)
     gross_weight: Optional[float] = Field(default=None, ge=0)
     length_cm: Optional[float] = Field(default=None, ge=0)
@@ -313,6 +371,7 @@ class OutboundBoxUpdate(BaseModel):
     tracking_no: str = Field(min_length=1)
     note: str = ""
     items: list[OutboundBoxItemUpdate] = Field(min_length=1)
+    freight_jpy: Optional[float] = Field(default=None, ge=0)
     net_weight: Optional[float] = Field(default=None, ge=0)
     gross_weight: Optional[float] = Field(default=None, ge=0)
     length_cm: Optional[float] = Field(default=None, ge=0)
@@ -356,6 +415,7 @@ class OutboundBoxOut(BaseModel):
     length_cm: Optional[float] = None
     width_cm: Optional[float] = None
     height_cm: Optional[float] = None
+    freight_jpy: Optional[float] = None
     items: list[ShipmentItemOut] = []
     order_groups: list[OrderGroupOut] = []
 

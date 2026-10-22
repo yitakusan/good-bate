@@ -52,7 +52,38 @@ class AnimateOrderHistoryParseTests(unittest.TestCase):
         self.assertEqual(by_sku["3459222"]["qty"], 80)
         self.assertEqual(by_sku["3459222"]["unit_cost"], 275.0)
         self.assertIn("/pd/3459202/", by_sku["3459202"]["source_url"])
+        self.assertEqual(by_sku["3459202"]["barcode"], "4573643315108")
+        self.assertEqual(by_sku["3459221"]["barcode"], "4573643314989")
+        self.assertEqual(by_sku["3459222"]["barcode"], "4573643314996")
         self.assertEqual(sum(int(p["qty"]) for p in products), 300)
+
+    def test_image_filename_jan_needs_check_digit(self) -> None:
+        html = """
+        <div class="order_histories">
+          <p class="order_id">注文番号 51800001</p>
+          <div class="order_item">
+            <a href="/pd/3393440/">
+              <img src="https://tc-animate.techorus-cdn.com/resize_image/resize_image.php?image=4534530627278_1_1770116707.jpg&amp;square=1" alt="ぬいぐるみ 冨岡">
+            </a>
+            <h3><a href="/pd/3393440/">ぬいぐるみ 冨岡</a></h3>
+            <p class="order_item_price">1点</p>
+            <p class="order_item_price">2,800円</p>
+          </div>
+          <div class="order_item">
+            <a href="/pd/3393999/">
+              <img src="https://tc-animate.techorus-cdn.com/resize_image/resize_image.php?image=4534530627279_1_1770116707.jpg" alt="ぬいぐるみ 校验失败">
+            </a>
+            <h3><a href="/pd/3393999/">ぬいぐるみ 校验失败</a></h3>
+            <p class="order_item_price">1点</p>
+            <p class="order_item_price">2,800円</p>
+          </div>
+        </div>
+        """
+        parsed = parse_animate_order_history_html(html)
+        by_sku = {p["product_id"]: p for p in parsed["products"]}
+        self.assertEqual(by_sku["3393440"]["barcode"], "4534530627278")
+        self.assertEqual(by_sku["3393440"]["unit_cost"], 2800.0)
+        self.assertEqual(by_sku["3393999"]["barcode"], "")
 
     def test_skips_privilege(self) -> None:
         lines = parse_animate_order_history_lines(self.html)
@@ -67,6 +98,8 @@ class AnimateOrderHistoryParseTests(unittest.TestCase):
         self.assertEqual(result["shipping_fee"], 0.0)
         self.assertEqual(result["order_total"], 128700.0)
         self.assertIn("アニメイト", result["message"])
+        self.assertIn("已从商品图文件名填入 JAN", result["message"])
+        self.assertEqual(result["products"][0]["barcode"], "4573643315108")
 
 
 if __name__ == "__main__":

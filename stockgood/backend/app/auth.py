@@ -67,18 +67,22 @@ def auth_required() -> bool:
     settings = get_settings()
     if settings.auth_required is True:
         return True
-    if settings.auth_required is False:
-        return False
-    if settings.admin_token:
-        return True
-    with get_conn() as conn:
-        row = conn.execute(
-            """
-            SELECT COUNT(*) AS c FROM users
-            WHERE role IN ('admin', 'warehouse', 'finance') AND is_active = 1
-            """
-        ).fetchone()
-        return int(row["c"] if row else 0) > 0
+    # TEMP: 员工登录先关掉。有员工账号时也不再自动要求登录。
+    # 测试或 Docker 仍可设 STOCKGOOD_AUTH_REQUIRED=true。
+    # 客户 /apply /me 使用 get_current_user，不受此开关影响。
+    return False
+    # if settings.auth_required is False:
+    #     return False
+    # if settings.admin_token:
+    #     return True
+    # with get_conn() as conn:
+    #     row = conn.execute(
+    #         """
+    #         SELECT COUNT(*) AS c FROM users
+    #         WHERE role IN ('admin', 'warehouse', 'finance') AND is_active = 1
+    #         """
+    #     ).fetchone()
+    #     return int(row["c"] if row else 0) > 0
 
 
 def user_out(row: Any) -> dict[str, Any]:
@@ -317,19 +321,19 @@ def get_current_user(
 def require_staff(
     user: Annotated[Optional[dict[str, Any]], Depends(resolve_user)],
 ) -> dict[str, Any]:
+    local_admin = {
+        "id": 0,
+        "email": "local",
+        "display_name": "Local",
+        "role": "admin",
+        "is_active": True,
+        "created_at": "",
+    }
     if not auth_required():
-        if user and user["role"] not in STAFF_ROLES and user["role"] != "admin":
-            # open local mode but customer session should not hit staff APIs
-            if user["role"] == "customer":
-                raise HTTPException(status_code=403, detail="staff only")
-        return user or {
-            "id": 0,
-            "email": "local",
-            "display_name": "Local",
-            "role": "admin",
-            "is_active": True,
-            "created_at": "",
-        }
+        if user and user["role"] in STAFF_ROLES:
+            return user
+        # 员工登录关闭时：客户 cookie 不挡员工 API
+        return local_admin
     if not user:
         raise HTTPException(status_code=401, detail="login required")
     if user["role"] not in STAFF_ROLES:

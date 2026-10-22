@@ -1,0 +1,65 @@
+{
+  "id": "6a3d0e2783d26a13d85a4c14",
+  "number": "250913001",
+  "status": "waiting",
+  "salesPayment": 18050,
+  "createdAt": "2026-06-20T12:00:00+09:00",
+  "items": [
+    {
+      "name": "【負けヒロインが多すぎる！】トレーディング缶バッジ BOX（全5種）",
+      "variation": "",
+      "quantity": 1,
+      "images": [
+        {
+          "url": "https://imagedelivery.net/QondspN4HIUvB_R16-ddAQ/5e902c3a2a9a42487c1a44c4/8fe5a32087add28bd251.jpg/fit=cover,w=460,h=460"
+        }
+      ]
+    }
+  ],
+  "deliveries": [
+    {
+      "type": "shipping",
+      "shippingFee": { "amount": 800 },
+      "items": [
+        {
+          "name": "【負けヒロインが多すぎる！】トレーディング缶バッジ BOX（全5種）",
+          "variationName": "",
+          "quantity": 1,
+          "itemUrl": "https://shibuyatsutaya.stores.jp/items/6a22862e9d5f2b0605ba1eca",
+          "images": [
+            {
+              "url": "https://imagedelivery.net/QondspN4HIUvB_R16-ddAQ/5e902c3a2a9a42487c1a44c4/8fe5a32087add28bd251.jpg/fit=cover,w=460,h=460"
+            }
+          ],
+          "taxRate": 0.1,
+          "taxClass": "taxable",
+          "salesDetail": { "salesPayment": 2750 }
+        },
+        {
+          "name": "【負けヒロインが多すぎる！】アクリルスタンド",
+          "variationName": "亜玖璃",
+          "quantity": 2,
+          "itemUrl": "https://shibuyatsutaya.stores.jp/items/6a2290a7130f3413bd9f42f2",
+          "images": [
+            {
+              "url": "https://imagedelivery.net/QondspN4HIUvB_R16-ddAQ/example.jpg"
+            }
+          ],
+          "taxRate": 0.1,
+          "taxClass": "taxable",
+          "salesDetail": { "salesPayment": 4400 }
+        },
+        {
+          "name": "【負けヒロインが多すぎる！】缶バッジ",
+          "variationName": "",
+          "quantity": 3,
+          "itemUrl": "https://shibuyatsutaya.stores.jp/items/6a22917f9d5f2b13510d4d89",
+          "images": [],
+          "taxRate": 0.1,
+          "taxClass": "taxable",
+          "salesDetail": { "salesPayment": 1650 }
+        }
+      ]
+    }
+  ]
+}

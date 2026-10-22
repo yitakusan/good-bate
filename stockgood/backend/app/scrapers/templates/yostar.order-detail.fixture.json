@@ -1,0 +1,47 @@
+{
+  "code": 200,
+  "msg": "OK",
+  "data": {
+    "order_id": 1001,
+    "order_no": "YO20260913001",
+    "order_status": 2,
+    "order_status_string": "発送済み",
+    "freight_price": 700,
+    "payment_price": 6640,
+    "total_price": 6640,
+    "sub_price": 5940,
+    "service_price": 0,
+    "list": [
+      {
+        "product_id": 5232,
+        "name": "アクリルスタンド エリカ",
+        "head_image": "https://shopimages.yostar.co.jp/a.jpg",
+        "price": 1980,
+        "quantity": 2,
+        "sku_name": "",
+        "is_tax_reduce": 0,
+        "hint": ""
+      },
+      {
+        "product_id": 5233,
+        "name": "アクリルスタンド ノノミドレス",
+        "head_image": "https://shopimages.yostar.co.jp/b.jpg",
+        "price": 1980,
+        "quantity": 1,
+        "sku_name": "",
+        "is_tax_reduce": 0,
+        "hint": ""
+      },
+      {
+        "product_id": 5234,
+        "name": "アクリルスタンド ハルカドレス",
+        "head_image": "https://shopimages.yostar.co.jp/c.jpg",
+        "price": 1980,
+        "quantity": 1,
+        "sku_name": "",
+        "is_tax_reduce": 0,
+        "hint": ""
+      }
+    ]
+  }
+}

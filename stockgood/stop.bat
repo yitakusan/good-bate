@@ -1,30 +1,25 @@
 @echo off
+REM Canonical stopper. Chinese-named wrapper calls this file.
 chcp 65001 >nul
 setlocal
-
 cd /d "%~dp0"
-
 echo ========================================
 echo   Stockgood one-click stop
 echo ========================================
 echo.
-
 echo Stopping backend (port 8002)...
 call :kill_port 8002
-
 echo Stopping frontend (port 5174)...
 call :kill_port 5174
-
-REM leftover titled windows from older start.bat
 taskkill /FI "WINDOWTITLE eq Stockgood Backend*" /T /F >nul 2>&1
 taskkill /FI "WINDOWTITLE eq Stockgood Frontend*" /T /F >nul 2>&1
-
-REM Wait briefly so SQLite releases file locks, then snapshot.
 timeout /t 1 /nobreak >nul
 echo.
 echo Backing up database...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0scripts\backup-db.ps1" -Reason stop
-
+if errorlevel 1 (
+  echo [WARN] backup failed; services were still stopped.
+)
 echo.
 echo Done. Stockgood stopped.
 echo Backups: backend\data\backups\
@@ -41,6 +36,10 @@ for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr /R /C:":%PORT% .*LISTE
     echo   killing PID %%P on port %PORT%
     taskkill /F /PID %%P /T >nul 2>&1
   )
+)
+if not defined FOUND (
+  powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-NetTCPConnection -LocalPort %PORT% -State Listen -ErrorAction SilentlyContinue | ForEach-Object { Write-Host ('  killing PID ' + $_.OwningProcess + ' on port %PORT%'); Stop-Process -Id $_.OwningProcess -Force -ErrorAction SilentlyContinue }" 2>nul
+  for /f "tokens=5" %%P in ('netstat -ano 2^>nul ^| findstr /R /C:":%PORT% .*LISTENING"') do set "FOUND=1"
 )
 if not defined FOUND echo   (nothing listening on %PORT%)
 exit /b 0

@@ -19,7 +19,7 @@
 
 ## 一键启动
 
-根目录双击 **`start-tunnel.bat`**：
+根目录双击 **`启动隧道.bat`**：
 
 1. 检查 `cloudflared` 是否在 PATH
 2. 若 `http://127.0.0.1:5174` 未就绪，则调用 `scripts/start-bg.ps1` 起前后端
@@ -42,7 +42,7 @@
 
 ## 安全
 
-临时 URL 谁拿到谁都能进。分享前再开、用完 `Ctrl+C` 关隧道；本地用 `stop.bat` 停服务。
+临时 URL 谁拿到谁都能进。分享前再开、用完 `Ctrl+C` 关隧道；本地用 `停止.bat` 停服务。
 
 **顾客链接请用：** `https://xxxx.trycloudflare.com/apply`  
 （页头「复制申请页」即复制此地址；勿发根路径，否则会进库存管理界面。）

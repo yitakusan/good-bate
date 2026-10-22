@@ -38,7 +38,7 @@ PRICE_RE = re.compile(
 )
 
 _RELEASE_RE = re.compile(
-    r"(?:商品のお届け|お届け時期|お届け予定日|お届けは|配送時期|配送予定|発売予定日|発売日|発送予定|出荷予定)"
+    r"(?:商品のお届け|お届け時期|お届け予定日|お届けは|配送時期|配送予定|発送時期|発売予定日|発売日|発送予定|出荷予定)"
     r"[^。．\n\r]*?(?:(\d{4})年)?\s*(\d{1,2})月\s*(上旬|中旬|下旬|\d{1,2}日)?",
 )
 
@@ -792,6 +792,31 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
         is_eeo_order_detail_html,
         parse_eeo_order_detail_html,
     )
+    from app.scrapers.lafary import (
+        is_lafary_order_html,
+        parse_lafary_order_html,
+    )
+    from app.scrapers.medicos import (
+        is_medicos_order_detail_html,
+        parse_medicos_order_detail_html,
+    )
+    from app.scrapers.yostar import (
+        is_yostar_spa_shell_html,
+        looks_like_yostar_order_json,
+        looks_like_yostar_product_json,
+        parse_yostar_order_json,
+        parse_yostar_product_json,
+    )
+    from app.scrapers.storesjp import (
+        is_stores_captcha_html,
+        is_stores_mypage_order_shell_html,
+        is_stores_order_detail_html,
+        is_stores_product_html,
+        looks_like_stores_order_json,
+        parse_stores_order_detail_html,
+        parse_stores_order_json,
+        parse_stores_product_html,
+    )
     from app.scrapers.zozo import (
         gone_message,
         html_looks_gone,
@@ -801,6 +826,154 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
         orders_to_scrape_products,
         parse_zozo_order_detail_html,
     )
+
+    # STORES（*.stores.jp）— product SSR HTML / rendered order detail / Network JSON / SPA shell.
+    if is_stores_captcha_html(html):
+        raise ValueError(
+            "检测到 STORES Cloudflare Captcha 页，无法解析。"
+            "请在浏览器打开商品页后「查看网页源代码」整页粘贴，"
+            "或注文详情用 Network→/web/customers/orders/{id} 的 JSON / 購入詳細 Elements HTML。"
+        )
+    if is_stores_order_detail_html(html):
+        parsed = parse_stores_order_detail_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 STORES 購入詳細 HTML，但未能解析出商品行。"
+                "请确认粘贴含 .order_history_item 的已渲染页面（Elements），"
+                "或改贴 Network→/web/customers/orders/{id} 的 JSON。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文详情"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 STORES 購入詳細 HTML（{ref_text}）解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；行金额为小计÷数量；通常无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+    if is_stores_mypage_order_shell_html(html):
+        raise ValueError(
+            "检测到 STORES マイページ注文页 SPA 空壳（无商品行 DOM）。"
+            "请登录后打开購入詳細，用 Elements 复制含商品行的 HTML；"
+            "或 F12→Network 复制 GET /web/customers/orders/{id} 的 JSON。"
+            "商品页可直接贴 /items/{id} 链接或商品页源代码。"
+        )
+    if looks_like_stores_order_json(html):
+        parsed = parse_stores_order_json(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 STORES 注文 JSON，但未能解析出商品。"
+                "请确认粘贴的是 Network→/web/customers/orders/{id} 的完整响应。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文详情"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 STORES {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；行金额为小计÷数量；通常无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+    if is_stores_product_html(html):
+        product = parse_stores_product_html(html, source_url or "")
+        if not product or not product.get("name"):
+            raise ValueError(
+                "检测到 STORES 商品页 HTML，但未能解析出商品。"
+                "请确认复制的是商品详情「查看网页源代码」整页。"
+            )
+        if not product.get("ip"):
+            product["ip"] = _guess_ip(product.get("name") or "")
+        return {
+            "kind": "list",
+            "products": [product],
+            "message": "已从 STORES 商品页源代码解析 1 件，请核对后导入",
+        }
+
+    # shop.yostar.co.jp — SPA shell / Network JSON (order detail requires login).
+    if is_yostar_spa_shell_html(html):
+        raise ValueError(
+            "检测到 Yostar OFFICIAL SHOP 的 SPA 空壳源代码（#app 无商品 DOM）。"
+            "请改贴商品页链接（如 https://shop.yostar.co.jp/products/detail/5232），"
+            "或在浏览器 F12→Network 中复制 /api/v1/order/detail、/api/v1/product/detail 的 JSON 响应。"
+        )
+    if looks_like_yostar_order_json(html):
+        parsed = parse_yostar_order_json(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 Yostar OFFICIAL SHOP 注文 JSON，但未能解析出商品。"
+                "请确认粘贴的是 Network→/api/v1/order/detail 的完整响应。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文详情"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 Yostar OFFICIAL SHOP {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；订单 JSON 通常无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+    if looks_like_yostar_product_json(html):
+        products = parse_yostar_product_json(html, page_url=source_url or "")
+        if not products:
+            raise ValueError(
+                "检测到 Yostar OFFICIAL SHOP 商品 JSON，但未能解析出商品。"
+                "请确认粘贴的是 Network→/api/v1/product/detail 的完整响应。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 Yostar OFFICIAL SHOP 商品 JSON 解析 {len(products)} 件，请核对后导入"
+            ),
+        }
 
     # vvstore.jp ご注文履歴詳細 — multi-line order with unit price + shipping.
     if is_vvstore_order_detail_html(html):
@@ -870,6 +1043,69 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
             "order_total": total,
         }
 
+    # store-gk.com（MakeShop）注文履歴 confirm.html — may contain several orders.
+    from app.scrapers.storegk import (
+        is_storegk_order_history_html,
+        parse_order_history_html,
+    )
+
+    if is_storegk_order_history_html(html):
+        orders = parse_order_history_html(html)
+        if not orders or not any(order.get("lines") for order in orders):
+            raise ValueError(
+                "检测到 store-gk.com 注文履歴，但未能解析出商品。"
+                "请确认复制的是マイページ「注文履歴」整页源代码。"
+            )
+        products = []
+        for order in orders:
+            for line in order.get("lines") or []:
+                products.append(
+                    {
+                        "name": line.get("name") or "",
+                        "shop": "store-gk.com",
+                        "unit_cost": line.get("unit_cost"),
+                        "image_url": line.get("image_url") or "",
+                        "source_url": line.get("source_url") or "",
+                        "qty": line.get("qty") or 1,
+                        "ip": _guess_ip(line.get("name") or ""),
+                        "barcode": "",
+                        "expected_ship_at": line.get("expected_ship_at"),
+                        "expected_ship_period": line.get("expected_ship_period"),
+                    }
+                )
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        if len(orders) == 1:
+            order = orders[0]
+            fee = order.get("shipping_fee")
+            total = order.get("order_total")
+            order_ref = order.get("order_ref") or ""
+            fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+            total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+            return {
+                "kind": "list",
+                "products": products,
+                "message": (
+                    f"已从 store-gk 注文番号 {order_ref} 解析 {len(products)} 种"
+                    f"（合计数量 {qty_sum}{fee_text}{total_text}；单价为税抜×1.1），请核对后导入"
+                ),
+                "order_ref": order_ref,
+                "shipping_fee": fee,
+                "order_total": total,
+            }
+        refs = "、".join(str(order.get("order_ref") or "") for order in orders)
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"store-gk 注文履歴共 {len(orders)} 笔（{refs}），"
+                f"已列出 {len(products)} 种、合计数量 {qty_sum}。"
+                "请只勾选同一注文番号再导入，并手填该笔订单号和运费。单价为税抜×1.1。"
+            ),
+            "order_ref": "",
+            "shipping_fee": None,
+            "order_total": None,
+        }
+
     # cystore.com（CyStore）購入履歴詳細 — multi-line order; usually no JAN on order page.
     if is_cystore_order_detail_html(html):
         parsed = parse_cystore_order_detail_html(html)
@@ -924,12 +1160,19 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
         fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
         total_text = f"，合计 ¥{int(total)}" if total is not None else ""
         ref_text = f"注文番号 {order_ref}" if order_ref else "注文履歴"
+        jan_n = sum(1 for p in products if (p.get("barcode") or "").strip())
+        if jan_n == merged_n:
+            jan_text = "；已从商品图文件名填入 JAN"
+        elif jan_n:
+            jan_text = f"；{jan_n}/{merged_n} 行已从商品图文件名填入 JAN"
+        else:
+            jan_text = "；订单页无 JAN"
         return {
             "kind": "list",
             "products": products,
             "message": (
                 f"已从 アニメイト {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
-                f"（合计数量 {qty_sum}{fee_text}{total_text}；订单页通常无 JAN），请核对后导入"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}{jan_text}），请核对后导入"
             ),
             "order_ref": order_ref,
             "shipping_fee": fee,
@@ -964,6 +1207,78 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
             "products": products,
             "message": (
                 f"已从 eeo Store {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}{jan_text}），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # lafary.shop（LAFARY ONLINE）Shopify customers/order — multi-line; usually no JAN.
+    if is_lafary_order_html(html):
+        parsed = parse_lafary_order_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 lafary.shop（LAFARY ONLINE）注文详情，但未能解析出商品。"
+                "请确认复制的是マイアカウント「注文 #…」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文 #{order_ref}" if order_ref else "注文详情"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 LAFARY ONLINE {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；订单页通常无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # medicos-e-shop.net（MEDICOS ONLINE SHOP）購入履歴詳細 — multi-line; mail BOXJAN may fill JAN.
+    if is_medicos_order_detail_html(html):
+        parsed = parse_medicos_order_detail_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 medicos-e-shop.net（MEDICOS ONLINE SHOP）購入履歴詳細，但未能解析出商品。"
+                "请确认复制的是マイページ「購入履歴詳細」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        raw_n = int(parsed.get("raw_line_count") or len(products))
+        merged_n = len(products)
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文详情"
+        jan_n = sum(1 for p in products if (p.get("barcode") or "").strip())
+        jan_text = (
+            f"，已回填 JAN {jan_n} 种"
+            if jan_n
+            else "；主列表通常无 JAN（邮件正文有 BOXJAN 时可回填）"
+        )
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 MEDICOS ONLINE SHOP {ref_text}解析 {raw_n} 行，合并为 {merged_n} 种"
                 f"（合计数量 {qty_sum}{fee_text}{total_text}{jan_text}），请核对后导入"
             ),
             "order_ref": order_ref,
@@ -1098,6 +1413,84 @@ async def scrape_html_document(html: str, source_url: str = "") -> dict[str, Any
     ):
         raise ValueError(gone_message(page_hint or "https://zozo.jp/"))
 
+    # Yahoo!ショッピング 注文履歴詳細. Unit price is tax-inclusive; options do not merge.
+    from app.scrapers.yahoo_shopping import (
+        is_yahoo_shopping_order_html,
+        parse_yahoo_shopping_order_html,
+    )
+
+    if is_yahoo_shopping_order_html(html):
+        parsed = parse_yahoo_shopping_order_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 Yahoo!ショッピング 注文履歴詳細，但未能解析出商品。"
+                "请确认复制的是已登录的「注文履歴詳細」整页源代码。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        store_name = parsed.get("store_name") or parsed.get("shop") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文番号 {order_ref}" if order_ref else "注文详情"
+        store_text = f"{store_name} " if store_name else ""
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 Yahoo!ショッピング {store_text}{ref_text}解析 {len(products)} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；单价为税込，订单页无 JAN），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
+    # Shopify new customer accounts: rendered 注文アイテム rows. View-source has no lines.
+    from app.scrapers.shopify_account import (
+        is_shopify_customer_order_html,
+        parse_shopify_customer_order_html,
+    )
+
+    if is_shopify_customer_order_html(html):
+        parsed = parse_shopify_customer_order_html(html)
+        products = parsed.get("products") or []
+        if not products:
+            raise ValueError(
+                "检测到 Shopify 顾客订单页的注文アイテム，但未能解析出商品。"
+                "请在订单页检查元素，复制包含「注文アイテム」和「注文合計」的已渲染 HTML。"
+                "查看网页源代码只有空的 #app，解析不出商品。"
+            )
+        for product in products:
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+        qty_sum = sum(int(p.get("qty") or 1) for p in products)
+        fee = parsed.get("shipping_fee")
+        total = parsed.get("order_total")
+        order_ref = parsed.get("order_ref") or ""
+        shop = parsed.get("shop") or ""
+        fee_text = f"，运费 ¥{int(fee)}" if fee is not None else ""
+        total_text = f"，合计 ¥{int(total)}" if total is not None else ""
+        ref_text = f"注文 ({order_ref})" if order_ref else "注文详情"
+        shop_text = f"{shop} " if shop else ""
+        shop_hint = "" if shop else "；片段里没有店铺域名，请手填店铺"
+        return {
+            "kind": "list",
+            "products": products,
+            "message": (
+                f"已从 Shopify 顾客订单 {shop_text}{ref_text}解析 {len(products)} 种"
+                f"（合计数量 {qty_sum}{fee_text}{total_text}；单价为税込{shop_hint}），请核对后导入"
+            ),
+            "order_ref": order_ref,
+            "shipping_fee": fee,
+            "order_total": total,
+        }
+
     product = parse_product_html(html, source_url)
     if not product:
         raise ValueError(
@@ -1127,7 +1520,42 @@ async def scrape_url(url: str) -> dict[str, Any]:
         is_sofmap_product_url,
         parse_sofmap_product_html,
     )
+    from app.scrapers.yostar import is_yostar_url, scrape_yostar_product
+    from app.scrapers.storesjp import (
+        is_stores_url,
+        item_id_from_url,
+        scrape_stores_product,
+    )
     from app.scrapers.zozo import blocked_message, is_zozo_url
+    from app.scrapers.futureshop import (
+        is_futureshop_product_url,
+        parse_futureshop_product_html,
+    )
+
+    if is_stores_url(url) and item_id_from_url(url):
+        # httpx 常被 Cloudflare 403；优先 curl（与 1999.co.jp 同策略）
+        product = await scrape_stores_product(url)
+        if product and product.get("name"):
+            if not product.get("ip"):
+                product["ip"] = _guess_ip(product.get("name") or "")
+            return {
+                "kind": "list",
+                "products": [product],
+                "message": "已从 STORES 商品页抓取 1 件，请核对后导入",
+            }
+        raise ValueError(
+            "STORES（stores.jp）商品页抓取失败（Cloudflare 或网络）。"
+            "请在浏览器打开商品页→查看网页源代码→整页粘贴到抓取框。"
+        )
+
+    if is_yostar_url(url) and "/products/detail/" in urlparse(url).path:
+        result = await scrape_yostar_product(url)
+        if result and result.get("products"):
+            return result
+        raise ValueError(
+            "Yostar OFFICIAL SHOP 商品 API 抓取失败。"
+            "请确认链接形如 https://shop.yostar.co.jp/products/detail/{id}，或改贴 Network 中 product/detail JSON。"
+        )
 
     if is_1999_url(url):
         product = await scrape_1999_product(url)
@@ -1142,6 +1570,19 @@ async def scrape_url(url: str) -> dict[str, Any]:
         )
 
     async with httpx.AsyncClient(headers=HEADERS) as client:
+        if is_futureshop_product_url(url):
+            try:
+                resp = await _fetch(client, url)
+                if resp.status_code == 200:
+                    product = parse_futureshop_product_html(resp.text, str(resp.url))
+                    if product and product.get("name"):
+                        return {
+                            "kind": "list",
+                            "products": [product],
+                            "message": "已从 FutureShop 商品页抓取 1 件（KADOKAWA / JUMP CS），请核对后导入",
+                        }
+            except Exception:
+                pass
         if is_miraithings_url(url):
             try:
                 resp = await _fetch(client, url)

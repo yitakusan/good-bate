@@ -51,6 +51,9 @@ KIND_EN: dict[str, str] = {
     "小卡": "Trading Cards",
     "玩具": "Toys",
     "海报": "Posters",
+    "挂毯": "Tapestries",
+    "杯垫": "Coasters",
+    "光盘": "CDs/DVDs",
 }
 
 

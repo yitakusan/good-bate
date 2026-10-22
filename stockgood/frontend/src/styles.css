@@ -307,6 +307,73 @@ textarea {
   background: rgba(61, 122, 95, 0.12);
 }
 
+.app-nav {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.nav-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.nav-sections button {
+  border: 1px solid var(--line);
+  background: var(--bg-panel);
+  color: var(--muted);
+  border-radius: 999px;
+  padding: 8px 16px;
+  cursor: pointer;
+}
+
+.nav-sections button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.nav-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.nav-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.nav-arrow {
+  color: var(--muted);
+}
+
+.nav-steps button {
+  border: 1px solid var(--line);
+  background: var(--bg-row);
+  color: var(--ink);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+}
+
+.nav-steps button.active {
+  border-color: var(--accent);
+  background: rgba(61, 122, 95, 0.14);
+  font-weight: 600;
+}
+
 .panel {
   background: var(--bg-panel);
   border: 1px solid var(--line);
@@ -543,6 +610,39 @@ th {
   color: var(--muted);
 }
 
+.scrape-guide {
+  margin: 0 0 12px;
+}
+
+.scrape-guide summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.scrape-guide ul {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.scrape-guide li {
+  display: grid;
+  grid-template-columns: 12rem minmax(0, 1fr);
+  gap: 2px 12px;
+  align-items: baseline;
+}
+
+.scrape-guide-tags {
+  font-size: 0.92rem;
+}
+
+.scrape-guide .muted {
+  grid-column: 2;
+  font-size: 0.82rem;
+}
+
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -764,6 +864,32 @@ th {
   text-decoration: underline;
 }
 
+.order-ref-with-thumb {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.order-preview {
+  width: 28px;
+  height: 28px;
+  object-fit: cover;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg-row);
+  flex-shrink: 0;
+}
+
+.order-preview.placeholder {
+  display: inline-block;
+  background: var(--bg-row-alt);
+}
+
+.order-table-head > span:nth-child(2) {
+  padding-left: 34px;
+}
+
 .order-fee-inline input,
 .order-ref-inline input {
   width: 100%;
@@ -871,15 +997,13 @@ th {
   }
 
   .order-row-main {
-    grid-template-columns: 36px minmax(0, 1fr) auto;
+    grid-template-columns: 22px minmax(0, 1fr) auto auto auto;
     grid-template-areas:
-      "check ref status"
-      "check ip ip"
-      "check total ship"
-      "check actions actions";
-    gap: 4px 8px;
-    padding: 10px 10px;
-    align-items: start;
+      "check ref status status status"
+      "check ip total ship actions";
+    gap: 2px 6px;
+    padding: 4px 8px 4px 4px;
+    align-items: center;
   }
 
   .order-row-main > .order-check {
@@ -913,7 +1037,8 @@ th {
 
   .order-row-main > .order-cell-total {
     grid-area: total;
-    justify-self: start;
+    justify-self: end;
+    white-space: nowrap;
   }
 
   .order-row-main > .order-cell-ship {
@@ -921,14 +1046,20 @@ th {
     justify-self: end;
     font-size: 0.8rem;
     color: var(--muted);
+    white-space: nowrap;
   }
 
   .order-row-main > .order-row-actions {
     grid-area: actions;
-    justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-top: 2px;
+    justify-content: flex-end;
+    flex-wrap: nowrap;
+    gap: 4px;
+    margin-top: 0;
+  }
+
+  .order-row-main .block-mini {
+    display: inline;
+    margin-left: 4px;
   }
 
   .order-row-main > .order-cell-total::before {
@@ -1395,6 +1526,12 @@ th {
 }
 
 @media (max-width: 700px) {
+  .scrape-guide li,
+  .scrape-guide .muted {
+    grid-template-columns: 1fr;
+    grid-column: auto;
+  }
+
   .app {
     padding: 12px 10px calc(24px + env(safe-area-inset-bottom, 0px));
   }
@@ -1565,9 +1702,9 @@ th {
   }
 
   .order-row-actions .btn {
-    min-height: 36px;
-    padding: 6px 12px;
-    font-size: 0.84rem;
+    min-height: 28px;
+    padding: 2px 8px;
+    font-size: 0.78rem;
   }
 
   .order-row-detail {
@@ -1787,6 +1924,20 @@ th {
   color: var(--muted);
   line-height: 1.55;
   max-width: 36em;
+}
+
+.apply-step-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.apply-line-meta {
+  color: var(--muted);
+  font-size: 0.88rem;
+  flex-shrink: 0;
+  text-align: right;
 }
 
 .apply-panel {

@@ -347,6 +347,7 @@ def init_db() -> None:
                 batch_id INTEGER,
                 box_no INTEGER,
                 note TEXT NOT NULL DEFAULT '',
+                freight_jpy REAL,
                 FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL,
                 FOREIGN KEY (batch_id) REFERENCES outbound_batches(id) ON DELETE CASCADE
             );

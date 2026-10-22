@@ -126,15 +126,13 @@ def _line_from_row(row: Tag) -> Optional[dict[str, Any]]:
         unit_cost = round(subtotal_excl * 1.1 / qty, 2)
 
     image_url = ""
-    img = item.select_one("img.productNoImage, img[src]")
-    if img and img.get("src"):
-        src = str(img["src"])
-        if src.startswith("http"):
+    for img in item.select("img[src]"):
+        src = str(img.get("src") or "").strip()
+        if not src or "none_image" in src:
+            continue
+        if src.startswith("http://") or src.startswith("https://"):
             image_url = src
-        elif brand_id:
-            # 本地另存图片不可用时保留商品页；图另论
-            image_url = ""
-
+            break
     return {
         "name": name,
         "qty": qty,
@@ -144,6 +142,18 @@ def _line_from_row(row: Tag) -> Optional[dict[str, Any]]:
         "brand_id": brand_id,
         "unit_cost_excl": unit_excl,
     }
+
+
+def is_storegk_order_history_html(html: str) -> bool:
+    text = html or ""
+    if "orderBlock" not in text or "注文番号" not in text or "orderList" not in text:
+        return False
+    lower = text.lower()
+    return (
+        "store-gk.com" in lower
+        or "gokurakuyu" in lower
+        or "gk store" in lower
+    )
 
 
 def parse_order_history_html(

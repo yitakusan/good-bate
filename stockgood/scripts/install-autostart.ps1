@@ -3,7 +3,10 @@ $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 $target = Join-Path $root "start-tray.bat"
 if (-not (Test-Path $target)) {
-  throw "missing start-tray.bat at $target"
+  $target = Join-Path $root "启动托盘.bat"
+}
+if (-not (Test-Path $target)) {
+  throw "missing start-tray.bat (or 启动托盘.bat) at $root"
 }
 
 $startup = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Startup"

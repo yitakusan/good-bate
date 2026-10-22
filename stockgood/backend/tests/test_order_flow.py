@@ -199,6 +199,68 @@ class OrderLifecycleTests(IsolatedDbTestCase):
             boxes_svc.add_orders(box["id"], [o4["id"]])
         self.assertEqual(ctx.exception.status_code, 400)
 
+    def test_outbound_allows_per_box_tracking_numbers(self) -> None:
+        order = make_priced_in_stock_order(order_ref="PER-BOX-TRK")
+        a_id, b_id = [line["id"] for line in order["lines"]]
+        batch = outbound_svc.create_batch(
+            boxes=[
+                {
+                    "box_no": 1,
+                    "carrier": "other",
+                    "tracking_no": "BOX-TRK-A",
+                    "item_ids": [a_id],
+                    **BOX_PACKING,
+                },
+                {
+                    "box_no": 2,
+                    "carrier": "other",
+                    "tracking_no": "BOX-TRK-B",
+                    "item_ids": [b_id],
+                    **BOX_PACKING,
+                },
+            ],
+            note="per-box tracking",
+        )
+        trackings = sorted(box["tracking_no"] for box in batch["boxes"])
+        self.assertEqual(trackings, ["BOX-TRK-A", "BOX-TRK-B"])
+
+    def test_outbound_box_freight_jpy_sets_batch_cny(self) -> None:
+        order = make_priced_in_stock_order(order_ref="PER-BOX-FEE")
+        a_id, b_id = [line["id"] for line in order["lines"]]
+        batch = outbound_svc.create_batch(
+            boxes=[
+                {
+                    "box_no": 1,
+                    "carrier": "other",
+                    "tracking_no": "FEE-TRK-A",
+                    "item_ids": [a_id],
+                    "freight_jpy": 17100,
+                    **BOX_PACKING,
+                },
+                {
+                    "box_no": 2,
+                    "carrier": "other",
+                    "tracking_no": "FEE-TRK-B",
+                    "item_ids": [b_id],
+                    "freight_jpy": 21600,
+                    **BOX_PACKING,
+                },
+            ],
+            note="per-box freight",
+            freight_exchange_rate=0.043,
+            freight_unit_price_jpy=450,
+            chargeable_weight=10,
+        )
+        self.assertAlmostEqual(batch["boxes"][0]["freight_jpy"], 17100)
+        self.assertAlmostEqual(batch["boxes"][1]["freight_jpy"], 21600)
+        self.assertAlmostEqual(batch["freight_cny"], 1664.1)
+
+        updated = outbound_svc.update_finance(
+            batch["id"],
+            {"freight_exchange_rate": 0.05},
+        )
+        self.assertAlmostEqual(updated["freight_cny"], 1935.0)
+
 
 if __name__ == "__main__":
     unittest.main()
