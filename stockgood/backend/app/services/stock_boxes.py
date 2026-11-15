@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.database import get_conn
+from app.warehouse_scope import ensure_visible, stamp_warehouse_id, warehouse_and
 
 # ============================================================
 # FEATURE: INVENTORY
@@ -56,8 +57,7 @@ def _box_out(conn, box_id: int) -> dict[str, Any]:
     box = conn.execute(
         "SELECT * FROM stock_boxes WHERE id = ?", (box_id,)
     ).fetchone()
-    if not box:
-        raise HTTPException(status_code=404, detail="stock box not found")
+    ensure_visible(box, "stock box not found")
     members = conn.execute(
         """
         SELECT o.id, o.order_ref, o.shop, o.status
@@ -132,8 +132,10 @@ def _box_out(conn, box_id: int) -> dict[str, Any]:
 
 def list_boxes() -> list[dict[str, Any]]:
     with get_conn() as conn:
+        wh_sql, wh_params = warehouse_and("warehouse_id")
         rows = conn.execute(
-            "SELECT id FROM stock_boxes ORDER BY box_no, id"
+            f"SELECT id FROM stock_boxes WHERE 1=1{wh_sql} ORDER BY box_no, id",
+            wh_params,
         ).fetchall()
         return [_box_out(conn, int(r["id"])) for r in rows]
 
@@ -144,7 +146,11 @@ def get_box(box_id: int) -> dict[str, Any]:
 
 
 def _next_box_no(conn) -> int:
-    row = conn.execute("SELECT COALESCE(MAX(box_no), 0) AS n FROM stock_boxes").fetchone()
+    warehouse_id = stamp_warehouse_id(conn)
+    row = conn.execute(
+        "SELECT COALESCE(MAX(box_no), 0) AS n FROM stock_boxes WHERE warehouse_id = ?",
+        (warehouse_id,),
+    ).fetchone()
     return int(row["n"]) + 1
 
 
@@ -162,10 +168,9 @@ def _validate_order_ids(conn, order_ids: list[int]) -> list[int]:
 
     for oid in unique:
         order = conn.execute(
-            "SELECT id, order_ref FROM orders WHERE id = ?", (oid,)
+            "SELECT id, order_ref, warehouse_id FROM orders WHERE id = ?", (oid,)
         ).fetchone()
-        if not order:
-            raise HTTPException(status_code=404, detail=f"order not found: {oid}")
+        ensure_visible(order, f"order not found: {oid}")
         stock = conn.execute(
             """
             SELECT COUNT(*) AS c FROM items
@@ -207,17 +212,19 @@ def create_box(
         use_no = int(box_no) if box_no is not None else next_no
         if use_no < 1:
             raise HTTPException(status_code=400, detail="box_no invalid")
+        warehouse_id = stamp_warehouse_id(conn)
         exists = conn.execute(
-            "SELECT id FROM stock_boxes WHERE box_no = ?", (use_no,)
+            "SELECT id FROM stock_boxes WHERE box_no = ? AND warehouse_id = ?",
+            (use_no, warehouse_id),
         ).fetchone()
         if exists:
             raise HTTPException(status_code=409, detail=f"库存箱号已存在: {use_no}")
         cur = conn.execute(
             """
-            INSERT INTO stock_boxes (box_no, note, created_at)
-            VALUES (?, ?, ?)
+            INSERT INTO stock_boxes (box_no, note, created_at, warehouse_id)
+            VALUES (?, ?, ?, ?)
             """,
-            (use_no, (note or "").strip(), _now()),
+            (use_no, (note or "").strip(), _now(), warehouse_id),
         )
         box_id = int(cur.lastrowid)
         for oid in ids:
@@ -231,10 +238,9 @@ def create_box(
 def add_orders(box_id: int, order_ids: list[int]) -> dict[str, Any]:
     with get_conn() as conn:
         box = conn.execute(
-            "SELECT id FROM stock_boxes WHERE id = ?", (box_id,)
+            "SELECT id, warehouse_id FROM stock_boxes WHERE id = ?", (box_id,)
         ).fetchone()
-        if not box:
-            raise HTTPException(status_code=404, detail="stock box not found")
+        ensure_visible(box, "stock box not found")
         ids = _validate_order_ids(conn, order_ids)
         _assert_orders_free(conn, ids, allow_box_id=box_id)
         for oid in ids:
@@ -255,10 +261,9 @@ def remove_orders(box_id: int, order_ids: list[int]) -> dict[str, Any] | None:
     """Remove orders from box. Deletes empty box and returns None."""
     with get_conn() as conn:
         box = conn.execute(
-            "SELECT id FROM stock_boxes WHERE id = ?", (box_id,)
+            "SELECT id, warehouse_id FROM stock_boxes WHERE id = ?", (box_id,)
         ).fetchone()
-        if not box:
-            raise HTTPException(status_code=404, detail="stock box not found")
+        ensure_visible(box, "stock box not found")
         for oid in order_ids:
             conn.execute(
                 "DELETE FROM stock_box_orders WHERE box_id = ? AND order_id = ?",
@@ -282,17 +287,19 @@ def update_box(
 ) -> dict[str, Any]:
     with get_conn() as conn:
         box = conn.execute(
-            "SELECT id FROM stock_boxes WHERE id = ?", (box_id,)
+            "SELECT id, warehouse_id FROM stock_boxes WHERE id = ?", (box_id,)
         ).fetchone()
-        if not box:
-            raise HTTPException(status_code=404, detail="stock box not found")
+        ensure_visible(box, "stock box not found")
         if box_no is not None:
             use_no = int(box_no)
             if use_no < 1:
                 raise HTTPException(status_code=400, detail="box_no invalid")
             clash = conn.execute(
-                "SELECT id FROM stock_boxes WHERE box_no = ? AND id != ?",
-                (use_no, box_id),
+                """
+                SELECT id FROM stock_boxes
+                WHERE box_no = ? AND id != ? AND warehouse_id = ?
+                """,
+                (use_no, box_id, int(box["warehouse_id"])),
             ).fetchone()
             if clash:
                 raise HTTPException(status_code=409, detail=f"库存箱号已存在: {use_no}")
@@ -311,10 +318,9 @@ def update_box(
 def delete_box(box_id: int) -> None:
     with get_conn() as conn:
         box = conn.execute(
-            "SELECT id FROM stock_boxes WHERE id = ?", (box_id,)
+            "SELECT id, warehouse_id FROM stock_boxes WHERE id = ?", (box_id,)
         ).fetchone()
-        if not box:
-            raise HTTPException(status_code=404, detail="stock box not found")
+        ensure_visible(box, "stock box not found")
         # Detach children so they become independent main boxes
         conn.execute(
             "UPDATE stock_boxes SET parent_id = NULL WHERE parent_id = ?",
@@ -434,10 +440,10 @@ def combine_orders(order_ids: list[int], note: str = "") -> dict[str, Any]:
             use_no = _next_box_no(conn)
             cur = conn.execute(
                 """
-                INSERT INTO stock_boxes (box_no, note, created_at)
-                VALUES (?, ?, ?)
+                INSERT INTO stock_boxes (box_no, note, created_at, warehouse_id)
+                VALUES (?, ?, ?, ?)
                 """,
-                (use_no, note_text, _now()),
+                (use_no, note_text, _now(), stamp_warehouse_id(conn)),
             )
             target_id = int(cur.lastrowid)
 

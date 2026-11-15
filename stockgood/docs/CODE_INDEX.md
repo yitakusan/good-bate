@@ -17,6 +17,7 @@
 - [FEATURE: AUTH](#feature-auth)
 - [FEATURE: USER_MANAGEMENT](#feature-user_management)
 - [FEATURE: CUSTOMER_PORTAL](#feature-customer_portal)
+- [FEATURE: WAREHOUSE](#feature-warehouse)
 - [FEATURE: ORDER](#feature-order)
 - [FEATURE: ORDER_IMPORT](#feature-order_import)
 - [FEATURE: RETAILER_CART](#feature-retailer_cart)
@@ -205,6 +206,48 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ---
 
+## FEATURE: WAREHOUSE
+
+### 功能说明
+
+员工页头可切换仓库，也可新建空仓库。订单、进库运单、在库箱、出库批次和财务月汇总按当前仓库分开。已有数据归到「默认仓库」。顾客申请仍是全站一份，确认做成库存订单时写入当前仓库。各仓库的在库箱号各自从 1 起，互不影响。
+
+### 用户入口
+
+员工主界面页头「仓库」下拉和「新建仓库」。
+
+### 前端
+
+- `frontend/src/App.tsx`（页头切换；切换后重新拉取当前 Tab）
+- `frontend/src/api.ts`：`fetchWarehouses`、`createWarehouse`；请求带 `X-Warehouse-Id`
+
+### 后端接口
+
+- `GET /api/warehouses`
+- `POST /api/warehouses`
+
+### 后端实现
+
+- `backend/app/services/warehouses.py`
+- `backend/app/warehouse_scope.py`（请求内当前仓库；未设置时测试仍看整库）
+- `backend/app/main.py` 中间件按请求头绑定仓库
+
+### 数据库
+
+- `warehouses`
+- `orders.warehouse_id`、`stock_boxes.warehouse_id`、`outbound_batches.warehouse_id`
+- `stock_boxes` 唯一约束为 `(warehouse_id, box_no)`
+
+### 测试
+
+- `backend/tests/test_warehouses.py`
+
+### 依赖关系
+
+订单、进库、在库、出库、财务月汇总读取时带上当前仓库。顾客申请不按仓库过滤。
+
+---
+
 ## FEATURE: ORDER
 
 ### 功能说明
@@ -283,6 +326,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - `frontend/src/scrapePaste.ts`（HTML/JSON 粘贴识别、`scrapeProductMatchKey`；ZOZO 分色须带 `?did=`，键为 `zozo:goods:{gid}:did:{did}`）
 - `frontend/src/scrapeDelay.ts`
 - `frontend/src/api.ts`：`scrapeUrl`、`createOrder`（抓取 Tab 导入）；`createItemsBatch` 仍可用但当前 Tab 未调用
+- `extension/`：浏览器插件。点一下把当前页已渲染 HTML 交给 `POST /api/scrape`，不另记到货地址。本机 `127.0.0.1:8002` 没开时提示先运行 `启动.bat`；已执行 `extension/注册拉起.bat` 后，插件会自己拉起服务。
 
 ### 后端接口
 
@@ -299,12 +343,18 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
   - sofmap：`product_detail.aspx?sku=` 商品页；JANコード / JSON-LD。另支持「お取引の詳細」订单 HTML（数量/运费/注文番号；图 URL 常含 JAN）；前端按 sku 匹配。
   - cystore：購入履歴詳細整页 HTML；含单价/数量/运费/注文番号；订单页通常无 JAN；商品 ID 取自图片路径；相同 pid 合并数量。
   - animate：注文履歴整页 HTML；行内金额为小计（单价=小计÷点数）；含运费/注文番号；跳过特典；商品 ID 取自 `/pd/{id}/`；相同 pid 合并数量；JAN 取自商品图 `image=` 文件名且须通过校验位。详见 [`docs/ORDER_IMPORT_ANIMATE.md`](ORDER_IMPORT_ANIMATE.md)。
+  - gamers：ゲーマーズ注文履歴（`gamers.py`）。N点旁边金额为行小计。不读お届け先和运单号。图文件名不是 JAN。异步打开商品页，取店舗予約用バーコード。前端键 `gamers:product:{id}`。
   - eeo：ご注文履歴詳細整页 HTML；含单价/数量/运费/注文番号；邮件正文商品コード可回填 JAN；商品 ID 取自 `/products/detail/{id}`；相同 pid 合并数量。
   - lafary：Shopify 顾客「注文 #…」整页 HTML；含单价/数量/运费/注文番号；订单页通常无 JAN；按品名合并数量。
   - shopify_account：新版顾客账户已渲染「注文アイテム」（`role=row`、`￥n/ユニット`、配送/合計）。单价税込。同名不同规格不合并。Ctrl+U 空壳不解析。片段可不带店铺域名。
   - yahoo_shopping：Yahoo!ショッピング「注文履歴詳細」整页 HTML。`.elPrice` 为税込单价，`×N` 为数量。同链接不同规格不合并。订单页无 JAN。前端键 `yahoo:{store}:{item}:{品名}`。
+  - movic：ムービック与カドスト「購入履歴詳細」整页 HTML（`movic.py`）。行合计÷数量为税込单价。手数料不算运费。送料只取订单金额表。不读 cart_item，不把配送表再计一遍。13 位商品代码校验通过才填 JAN。列表页不解析。订单页无图时再打开商品页，取 `img.js-img-source` 的 `/img/goods/L/`（没有则用 og:image）。前端键 `movic:goods:{code}` / `kadokawa:goods:{code}`。
+  - storegk：MakeShop「注文履歴」（`storegk.py`）。`store-gk.com` 与 THEキャラ `the-chara.com`（图床 `thechara55`）单价为税抜×1.1。ツインクル `shop.twincre.com`（图床 `TwinCre`）小计已标税込，单价不再乘 1.1。一页多笔不合成一个订单号。不读送付先。前端键 `storegk:goods:{id}` / `thechara:goods:{id}` / `twincre:goods:{id}`。
+  - amnibus：`historyCard` 订单卡片（`amnibus.py`）。数量旁价格为税込单价。无标价景品记 0。多笔卡片不合并。订单页无 JAN。前端键 `amnibus:product:{id}`。
+  - aniplex：online.aniplex.co.jp 注文詳細（`aniplex.py`）。単価（税込）为单价。商品代码不是 JAN。不读配送先。两个注文番号不合并。
+  - thebase：BASE「ご注文情報照会」（`thebase.py`，`c.thebase.in/dynamic_receipts`）。商品単価为税込单价。规格写进品名，同一 `/items/{id}` 不合并。送料与合計金額分开。不读购买者、地址、电话、邮箱、运单号。前端键 `base:{host}:item:{id}:{品名}`。
   - medicos：EC-CUBE「購入履歴詳細」整页 HTML；含单价/数量/运费/注文番号；邮件 BOXJAN 可回填 JAN；商品 ID 取自图片文件名或 `/products/detail/{id}`；相同 pid/品名合并数量。
-  - yostar：SPA + ecshop-api；商品 URL 调 `product/detail`；Ctrl+U 空壳不可用；注文/商品可粘贴 Network JSON；价取 `sku[].price`；匹配键 `yostar:product:{id}`。
+  - yostar：SPA + ecshop-api；商品 URL 调 `product/detail`；Ctrl+U 空壳不可用；已渲染ご注文履歴用 `.price-single` 为单价、`xN` 为数量；注文/商品也可粘贴 Network JSON；匹配键 `yostar:product:{id}`。
   - storesjp：STORES `*.stores.jp`；商品页 URL 优先本机 curl（httpx 常 403）；亦可粘贴 SSR HTML；注文可贴已渲染「購入詳細」HTML（`.order_history_item`）或 Network `/web/customers/orders/{id}` JSON；行小计÷数量；匹配键 `stores:item:{id}`。
 - `backend/app/services/items.py`：`create_items_batch`
 
@@ -318,12 +368,17 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - `backend/test_sofmap_order.py`
 - `backend/test_cystore_order.py`
 - `backend/test_animate_order.py`
+- `backend/test_gamers_order.py`
 - `backend/test_eeo_order.py`
 - `backend/test_lafary_order.py`
 - `backend/test_medicos_order.py`
 - `backend/test_yostar_order.py`
 - `backend/test_storesjp_order.py`
 - `backend/test_yahoo_shopping_order.py`
+- `backend/test_movic_order.py`
+- `backend/test_amnibus_order.py`
+- `backend/test_aniplex_order.py`
+- `backend/test_base_order.py`
 
 ### 依赖关系
 
@@ -936,11 +991,17 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 | `backend/test_sofmap_order.py` | ORDER_IMPORT |
 | `backend/test_cystore_order.py` | ORDER_IMPORT |
 | `backend/test_animate_order.py` | ORDER_IMPORT |
+| `backend/test_gamers_order.py` | ORDER_IMPORT |
 | `backend/test_retailer_cart.py` | RETAILER_CART |
 | `backend/test_eeo_order.py` | ORDER_IMPORT |
 | `backend/test_lafary_order.py` | ORDER_IMPORT |
 | `backend/test_shopify_account_order.py` | ORDER_IMPORT |
 | `backend/test_yahoo_shopping_order.py` | ORDER_IMPORT |
+| `backend/test_movic_order.py` | ORDER_IMPORT |
+| `backend/tests/test_warehouses.py` | WAREHOUSE |
+| `backend/test_amnibus_order.py` | ORDER_IMPORT |
+| `backend/test_aniplex_order.py` | ORDER_IMPORT |
+| `backend/test_base_order.py` | ORDER_IMPORT |
 | `backend/test_medicos_order.py` | ORDER_IMPORT |
 | `backend/_smoke_finance.py` | FINANCE 影子库冒烟 |
 | `backend/_smoke_product_kind.py` | SYSTEM / 种类 |

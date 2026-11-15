@@ -2,8 +2,8 @@
 
 站点为 SPA（#app 空壳 + ecshop-api）。商品页通过
 POST /ecshop-api/api/v1/product/detail {"product_id": int} 拉取。
-注文详情需登录，Ctrl+U 源代码不可用；可粘贴 Network 中
-/api/v1/order/detail 的 JSON 响应。
+Ctrl+U 空壳不可用。已渲染的「ご注文履歴」详情可直接解析；
+也可粘贴 Network 中 /api/v1/order/detail 的 JSON 响应。
 """
 
 from __future__ import annotations
@@ -11,9 +11,10 @@ from __future__ import annotations
 import json
 import re
 from typing import Any, Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
+from bs4 import BeautifulSoup
 
 from app.scrapers.preview import (
     HEADERS,
@@ -305,6 +306,121 @@ def merge_yostar_products(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if not cur.get("image_url") and line.get("image_url"):
             cur["image_url"] = line["image_url"]
     return [merged[k] for k in order]
+
+
+_YEN_RE = re.compile(r"[¥￥]\s*([\d,]+)")
+_QTY_RE = re.compile(r"[x×]\s*(\d+)", re.I)
+
+
+def is_yostar_order_detail_html(html: str) -> bool:
+    """Rendered ご注文履歴 detail (Elements copy), not the empty #app shell."""
+    if not html or "delivery-item" not in html:
+        return False
+    lower = html[:12000].lower()
+    return (
+        "shop.yostar.co.jp" in lower
+        or "yo-star.com/ecshop" in lower
+        or "yostar official shop" in lower
+    )
+
+
+def _yen_amount(text: str) -> Optional[float]:
+    match = _YEN_RE.search(text or "")
+    if not match:
+        return None
+    try:
+        value = float(match.group(1).replace(",", ""))
+    except ValueError:
+        return None
+    return value
+
+
+def parse_yostar_order_html(html: str) -> dict[str, Any]:
+    """Unit price is .price-single. .price-total 小計 is the line total."""
+    soup = BeautifulSoup(html, "html.parser")
+    root = soup.select_one(".order-detail-container") or soup
+    refs: list[str] = []
+    for block in root.select(".info-base-item"):
+        label = block.find("label")
+        value = block.find("span")
+        if not label or not value:
+            continue
+        if "ご注文番号" not in label.get_text(" ", strip=True):
+            continue
+        ref = value.get_text(" ", strip=True)
+        if ref and ref not in refs:
+            refs.append(ref)
+
+    lines: list[dict[str, Any]] = []
+    for block in root.select(".delivery-item"):
+        link = block.select_one("a[href*='/products/detail/']")
+        if link is None:
+            continue
+        name = _clean_product_name(link.get_text(" ", strip=True))
+        if not name:
+            continue
+        href = str(link.get("href") or "").strip()
+        source_url = urljoin(BASE + "/", href) if href else BASE
+        pid = product_id_from_url(source_url)
+        image = block.select_one("img.delivery-item-img") or block.find("img")
+        image_url = str(image.get("src") or "").strip() if image else ""
+        single = block.select_one(".price-single")
+        single_text = single.get_text(" ", strip=True) if single else ""
+        unit_cost = _yen_amount(single_text)
+        qty_match = _QTY_RE.search(single_text)
+        try:
+            qty = max(1, int(qty_match.group(1))) if qty_match else 1
+        except (TypeError, ValueError):
+            qty = 1
+        if unit_cost is None or unit_cost <= 0:
+            total_el = block.select_one(".price-total")
+            line_total = _yen_amount(total_el.get_text(" ", strip=True) if total_el else "")
+            if line_total is not None and qty > 0:
+                unit_cost = round(line_total / qty, 2)
+        if unit_cost is not None and unit_cost <= 0:
+            unit_cost = None
+        hint = block.select_one(".dilivery-hint, .delivery-hint")
+        release = _extract_release_from_text(
+            hint.get_text(" ", strip=True) if hint else ""
+        )
+        item = _product_dict(
+            name=name,
+            source_url=source_url,
+            shop=SHOP,
+            unit_cost=unit_cost,
+            image_url=image_url,
+            release_date=release,
+        )
+        item["product_id"] = str(pid) if pid is not None else ""
+        item["qty"] = qty
+        lines.append(item)
+
+    shipping_fee = None
+    order_total = None
+    summary = soup.select_one(".order-summary")
+    if summary is not None:
+        for row in summary.select(".summary-item"):
+            cells = row.find_all("span")
+            if len(cells) < 2:
+                continue
+            label = cells[0].get_text(" ", strip=True)
+            if label != "送料":
+                continue
+            shipping_fee = _yen_amount(cells[1].get_text(" ", strip=True))
+        for row in summary.select(".summary-total"):
+            text = row.get_text(" ", strip=True)
+            if "合計" not in text or "小計" in text:
+                continue
+            amount = _yen_amount(text)
+            if amount is not None:
+                order_total = amount
+    return {
+        "products": merge_yostar_products(lines),
+        "order_ref": refs[0] if len(refs) == 1 else "",
+        "shipping_fee": shipping_fee,
+        "order_total": order_total,
+        "raw_line_count": len(lines),
+    }
 
 
 def parse_yostar_order_json(text: str) -> dict[str, Any]:

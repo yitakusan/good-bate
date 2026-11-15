@@ -49,6 +49,13 @@ def is_animate_order_history_html(html: str) -> bool:
     if not text:
         return False
     lower = text.lower()
+    # ゲーマーズ reuses the same order card, but JAN is not in the image filename.
+    if (
+        "tc-gamers" in lower
+        or "gamers.co.jp" in lower
+        or "ゲーマーズ" in text
+    ):
+        return False
     has_site = (
         "animate-onlineshop.jp" in lower
         or "techorus-cdn.com" in lower

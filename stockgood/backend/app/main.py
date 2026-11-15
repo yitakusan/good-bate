@@ -31,7 +31,7 @@ from app.auth import (
     user_count,
     verify_password,
 )
-from app.database import DATA_DIR, get_db_path, init_db
+from app.database import DATA_DIR, get_conn, get_db_path, init_db
 from app.models import (
     ActionLogOut,
     ChangePasswordIn,
@@ -74,6 +74,8 @@ from app.models import (
     StockBoxOut,
     StockBoxUpdate,
     UserOut,
+    WarehouseCreate,
+    WarehouseOut,
 )
 from app.rate_limit import rate_limit
 from app.scrapers.preview import scrape_html_document, scrape_url
@@ -83,6 +85,7 @@ from app.services import finance as finance_svc
 from app.services import items as items_svc
 from app.services import order_requests as order_requests_svc
 from app.services import orders as orders_svc
+from app.services import warehouses as warehouses_svc
 from app.services import outbound_batches as outbound_svc
 from app.services import shipments as shipments_svc
 from app.services import stock_boxes as stock_boxes_svc
@@ -90,7 +93,7 @@ from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
-APP_VERSION = "0.10.11"
+APP_VERSION = "0.13.0"
 
 # ============================================================
 # SHARED MODULE
@@ -154,6 +157,40 @@ app.mount(
     StaticFiles(directory=str(ITEM_IMAGES_DIR)),
     name="item_images",
 )
+
+
+@app.middleware("http")
+async def bind_warehouse(request: Request, call_next):
+    """Staff requests stay inside one warehouse. Missing header uses the first warehouse."""
+    from app.warehouse_scope import reset_current_warehouse_id, set_current_warehouse_id
+
+    token = None
+    if request.url.path.startswith("/api/"):
+        raw = (request.headers.get("x-warehouse-id") or "").strip()
+        chosen = None
+        try:
+            with get_conn() as conn:
+                if raw.isdigit():
+                    row = conn.execute(
+                        "SELECT id FROM warehouses WHERE id = ?", (int(raw),)
+                    ).fetchone()
+                    if row:
+                        chosen = int(row["id"])
+                if chosen is None:
+                    row = conn.execute(
+                        "SELECT MIN(id) AS id FROM warehouses"
+                    ).fetchone()
+                    if row and row["id"] is not None:
+                        chosen = int(row["id"])
+        except Exception:
+            chosen = None
+        if chosen is not None:
+            token = set_current_warehouse_id(chosen)
+    try:
+        return await call_next(request)
+    finally:
+        if token is not None:
+            reset_current_warehouse_id(token)
 
 
 # ============================================================
@@ -584,6 +621,20 @@ def reject_order_request(
 # [数据库] orders, items
 # [代码索引] docs/CODE_INDEX.md#feature-order
 # ============================================================
+@app.get("/api/warehouses", tags=["仓库"], summary="仓库列表", response_model=list[WarehouseOut])
+def list_warehouses(_: dict = Depends(require_staff)) -> list[dict]:
+    """可切换的仓库。各仓库的订单、在库和出库互不可见。"""
+    return warehouses_svc.list_warehouses()
+
+
+@app.post("/api/warehouses", tags=["仓库"], summary="新建仓库", response_model=WarehouseOut)
+def create_warehouse(
+    payload: WarehouseCreate, _: dict = Depends(require_staff)
+) -> dict:
+    """新建空仓库。已有数据留在默认仓库。"""
+    return warehouses_svc.create_warehouse(payload.name)
+
+
 @app.get("/api/stats", tags=["订单"], summary="状态统计", response_model=StatsOut)
 def stats(_: dict = Depends(require_staff)) -> dict:
     """各订单/货品状态数量汇总。"""

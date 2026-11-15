@@ -85,6 +85,7 @@ POST /api/orders  (一笔订单 + 多行明细; 状态 ordered)
 | sofmap | `sofmap:product:{sku}` (`product_detail.aspx?sku=`) |
 | cystore | `cystore:product:{pid}` (`pid` 或 `product_id`) |
 | アニメイト | `animate:product:{id}` (`/pd/{id}`) |
+| ゲーマーズ | `gamers:product:{id}` (`/pd/{id}` on gamers.co.jp) |
 | eeo.today | `eeo:product:{id}` (`/products/detail/{id}`) |
 | lafary.shop | `lafary:product:{handle}` (`/products/{handle}`) |
 | medicos | `medicos:product:{id}` (`/products/detail/{id}`) |
@@ -196,6 +197,7 @@ Shopify 变体价取 `variants[0].price`; JAN 来自变体 `barcode` / 校验通
 | 3 | STORES マイページ SPA 空壳 | 报错, 引导 Elements / Network JSON |
 | 4 | STORES 注文 JSON (`/web/customers/orders/{id}`) | 同上口径 |
 | 5 | STORES 商品 SSR HTML | 单件 |
+| 5b | Yostar ご注文履歴已渲染 HTML (`.delivery-item`) | 单价 `.price-single`，数量 xN；送料；不读邮件重复行 |
 | 6 | Yostar `#app` SPA 空壳 | 报错 |
 | 7 | Yostar 注文 JSON `/api/v1/order/detail` | 多行 |
 | 8 | Yostar 商品 JSON `/api/v1/product/detail` | 单件或 sku |
@@ -203,6 +205,7 @@ Shopify 变体价取 `variants[0].price`; JAN 来自变体 `barcode` / 校验通
 | 10 | sofmap お取引の詳細 | 图 URL 常带 JAN |
 | 11 | CyStore 購入履歴詳細 | 订单页通常无 JAN |
 | 12 | アニメイト 注文履歴 | 行金额是小计; 跳过特典 |
+| 12b | ゲーマーズ 注文履歴 | 行金额是小计; 异步打开商品页取店舗予約用バーコード |
 | 13 | eeo ご注文履歴詳細 | 邮件正文商品コード可补 JAN |
 | 14 | LAFARY Shopify 顾客注文 | 订单页通常无 JAN |
 | 15 | MEDICOS 購入履歴詳細 | 邮件 BOXJAN 可补 JAN |
@@ -213,7 +216,12 @@ Shopify 变体价取 `variants[0].price`; JAN 来自变体 `barcode` / 校验通
 | 20 | sofmap 商品 HTML (非注文) | 单件 |
 | 21 | ZOZO gone 文案 | 报下架 |
 | 22 | Yahoo!ショッピング 注文履歴詳細 | 单价税込; 同链接不同规格不合并; 无 JAN |
-| 23 | **通用** `parse_product_html` | og / JSON-LD / h1 |
+| 23 | movic.jp / カドスト 購入履歴詳細 | 行合计÷数量; 手数料不算运费; 列表页不解析; 13位商品代码校验后可作 JAN; 商品页补 /img/goods/L/ 主图 |
+| 24 | amnibus.com historyCard | 税込单价; 无标价景品为 0; 多笔卡片不合并 |
+| 25 | THEキャラ / store-gk / ツインクル MakeShop 注文履歴 | store-gk 与 THEキャラ税抜×1.1; ツインクル小计已标税込; 多笔不合并订单号 |
+| 26 | online.aniplex.co.jp 注文詳細 | 税込単価; 商品代码不是 JAN |
+| 27 | BASE dynamic_receipts 购买确认 | 税込単価; 同链接不同规格不合并; 不读购买者与运单号 |
+| 28 | **通用** `parse_product_html` | og / JSON-LD / h1 |
 
 未命中且通用解析也没有品名 → 422。
 
@@ -305,7 +313,11 @@ Shopify 变体价取 `variants[0].price`; JAN 来自变体 `barcode` / 校验通
 
 给 AI 的完整说明：[`docs/ORDER_IMPORT_ANIMATE.md`](ORDER_IMPORT_ANIMATE.md)。
 
-マイページ注文履歴 `.order_item`。链接 `/pd/{id}/`。行内「円」多为 **小计**, `unit_cost = 小计 ÷ 点数`。class 含 privilege/tokuten 或特典标题的块 **跳过**。JAN 只取商品图 `image={JAN}_...jpg`，且须通过校验位。
+マイページ注文履歴 `.order_item`。链接 `/pd/{id}/`。行内「円」多为 **小计**, `unit_cost = 小计 ÷ 点数`。class 含 privilege/tokuten 或特典标题的块 **跳过**。JAN 只取商品图 `image={JAN}_...jpg`，且须通过校验位。ゲーマーズ（`tc-gamers` / `gamers.co.jp`）不走这里。
+
+### 8.7b gamers.co.jp (`gamers.py`)
+
+注文履歴里展开的一笔注文。`p.num` 的 N点是数量，旁边的金额是行小计，单价 = 小计 ÷ 数量，税込。配送料・手数料是运费，注文合計金額是合计。不读お届け先和配送伝票番号。一页多个注文番号时不合成一个订单号。订单图文件名不是 JAN。解析后异步打开商品页，取「店舗予約用バーコード」。商品页打不开则条形码留空。
 
 ### 8.8 eeo.today (`eeo.py`)
 
@@ -326,10 +338,11 @@ SPA + `ecshop-api`。Ctrl+U 只有 `#app` 空壳, **不能**当商品/注文解�
 | 输入 | 行为 |
 |------|------|
 | 商品 URL `/products/detail/{id}` | POST product/detail; 价 `sku[].price` |
-| Network 商品 JSON | 同上 |
+| 已渲染「ご注文履歴」详情 | `.delivery-item`；单价 `.price-single`，数量 `xN`；`.price-total` 是小计；送料取摘要「送料」，手数料不算运费；邮件正文不重复计行 |
+| Network 商品 JSON | 同商品 API |
 | Network 注文 JSON (`list[]`) | 品名 + `sku_name`; 合并 `product_id` |
 
-注文 JSON 通常无 JAN。
+注文页通常无 JAN。Ctrl+U 空壳仍然报错。
 
 ### 8.12 STORES `*.stores.jp` (`storesjp.py`)
 
@@ -360,7 +373,23 @@ SPA + `ecshop-api`。Ctrl+U 只有 `#app` 空壳, **不能**当商品/注文解�
 
 注文履歴詳細整页源代码（须已登录后的 HTML）。`.elPrice` 是税込单价，`.elNum` 的 `×N` 是数量，不把「商品合計」当单价。规格取选项里冒号后的文字，写进品名；同一商品链接的不同规格不合并。订单页无 JAN，图文件名是店铺商品代码。
 
-### 8.17 HMV / Bic Camera (`hmv.py` / `biccamera.py`)
+### 8.17 movic.jp (`movic.py`)
+
+購入履歴詳細整页源代码，ムービック和カドスト（`store.kadokawa.co.jp` 的 historydetail）共用。明细表「合計」是行小计，单价 = 合計 ÷ 数量，税込。送料取订单金额表，不取各配送块里的运单号或分箱运费。手数料只出现在提示里，不加进运费。不读 `metatag:cart_item`。配送明细表是同一批商品的重复，不另计。13 位商品代码校验通过才写入条形码；店内代码和字母代码留空。購入履歴列表不解析。订单页没有商品图时，再请求商品链接，取 `img.js-img-source` 里的 `/img/goods/L/` 大图；没有这张图时用 og:image。横幅图不用。商品页打不开则主图留空，其余字段仍可导入。
+
+### 8.18 amnibus.com (`amnibus.py`)
+
+一笔注文的 `historyCard`。数量旁边的价格是税込单价，不是订单合计。小计与合计相同且没有送料行时，运费记 0。无标价的景品行单价记 0。お届け予定日里的「2026年9月中旬」写入预计发货年月和上中下旬。商品代码、景品代码、图片文件名都不是 JAN。多笔 `historyCard` 不合并，需要分开粘贴。
+
+### 8.19 online.aniplex.co.jp (`aniplex.py`)
+
+購入履歴中的单笔注文詳細整页源代码（Demandware `Order-Details`）。`.product-summary__item-unit-price` 的単価是税込单价，行内合計是数量乘单价，不能当单价。配送料取 `.shipping-discount-total`，合计取 `.grand-total-sum`。商品代码（如 `MD23-0440001`）和分类文字都不是 JAN。品名斜杠后的作品名写入 IP。「2026年10月より順次お届け予定」只留年月。不读配送先的姓名、地址、电话。一页出现两个注文番号时不合并。
+
+### 8.20 BASE dynamic_receipts (`thebase.py`)
+
+`c.thebase.in/dynamic_receipts/{shop}/{注文ID}` 的「ご注文情報照会」整页源代码。`table.itemList` 的商品単価是税込单价，个数列是 `N点`（英文界面为 `Nqty`）。`p.itemList__additionalInfo` 的规格写进品名，所以同一 `/items/{id}` 的两个选项不会并成一行。送料取 `ul.chargeBreakdown`，合计取「合計金額」，不用商品小计当合计。店铺用商品链接的域名。不读购买者、地址、电话、邮箱，也不读配送状况里的运单号。订单页无 JAN。
+
+### 8.21 HMV / Bic Camera (`hmv.py` / `biccamera.py`)
 
 无独立字段映射, 走通用 HTML。检测空壳 / 等候页后重试。批量抓取前端拉长间隔。仍失败则提示 1–2 分钟后再试。
 
@@ -372,8 +401,8 @@ SPA + `ecshop-api`。Ctrl+U 只有 `#app` 空壳, **不能**当商品/注文解�
 
 | 模块 | 说明 |
 |------|------|
-| `storegk.py` + `templates/store-gk.com.order-history.md` | MakeShop 注文履歴已接入 `scrape_html_document`。粘贴 `confirm.html` 整页源代码；多笔注文全部列出，不自动合成一笔订单号 |
-| `templates/thebase.in.receipt.md` | BASE 收据页字段说明, 无对应 parser 接线 |
+| `storegk.py` + `templates/store-gk.com.order-history.md` | MakeShop 注文履歴。store-gk.com 与 THEキャラ（the-chara.com，图床 thechara55）单价税抜×1.1。ツインクル（shop.twincre.com，图床 TwinCre）小计标税込，不再乘 1.1。多笔不合成一个订单号 |
+| `templates/thebase.in.receipt.md` | BASE 收据页字段说明。解析在 `thebase.py`，由 `preview.scrape_html_document` 调用 |
 | `asobistore.parse_asobi_order_history_html` | 履历解析已写, 调度未调用 |
 
 ---

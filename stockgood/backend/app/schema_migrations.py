@@ -159,6 +159,99 @@ def migrate_shipments_freight_jpy(conn: sqlite3.Connection) -> None:
     _ensure_column(conn, "shipments", "freight_jpy", "REAL")
 
 
+def _stock_box_unique_is_per_warehouse(conn: sqlite3.Connection) -> bool:
+    for idx in conn.execute("PRAGMA index_list(stock_boxes)").fetchall():
+        if not idx["unique"]:
+            continue
+        cols = [
+            col["name"]
+            for col in conn.execute(f"PRAGMA index_info({idx['name']})").fetchall()
+        ]
+        if cols == ["warehouse_id", "box_no"]:
+            return True
+    return False
+
+
+def _rebuild_stock_boxes_per_warehouse(conn: sqlite3.Connection) -> None:
+    if not _table_exists_local(conn, "stock_boxes"):
+        return
+    if _stock_box_unique_is_per_warehouse(conn):
+        return
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        """
+        CREATE TABLE stock_boxes__new (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            box_no INTEGER NOT NULL,
+            note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL,
+            parent_id INTEGER,
+            warehouse_id INTEGER NOT NULL DEFAULT 1,
+            UNIQUE (warehouse_id, box_no)
+        )
+        """
+    )
+    conn.execute(
+        """
+        INSERT INTO stock_boxes__new (id, box_no, note, created_at, parent_id, warehouse_id)
+        SELECT id, box_no, note, created_at, parent_id, COALESCE(warehouse_id, 1)
+        FROM stock_boxes
+        """
+    )
+    conn.execute("DROP TABLE stock_boxes")
+    conn.execute("ALTER TABLE stock_boxes__new RENAME TO stock_boxes")
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_stock_boxes_parent ON stock_boxes(parent_id)"
+    )
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _table_exists_local(conn: sqlite3.Connection, name: str) -> bool:
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
+def migrate_warehouses(conn: sqlite3.Connection) -> None:
+    from app.database import _ensure_column
+
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS warehouses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    exists = conn.execute("SELECT id FROM warehouses WHERE id = 1").fetchone()
+    if exists is None:
+        conn.execute(
+            "INSERT INTO warehouses (id, name, created_at) VALUES (1, ?, ?)",
+            ("默认仓库", _now()),
+        )
+    for table in ("orders", "stock_boxes", "outbound_batches"):
+        _ensure_column(conn, table, "warehouse_id", "INTEGER NOT NULL DEFAULT 1")
+    conn.execute("UPDATE orders SET warehouse_id = 1 WHERE warehouse_id IS NULL")
+    conn.execute(
+        "UPDATE stock_boxes SET warehouse_id = 1 WHERE warehouse_id IS NULL"
+    )
+    conn.execute(
+        "UPDATE outbound_batches SET warehouse_id = 1 WHERE warehouse_id IS NULL"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_orders_warehouse ON orders(warehouse_id)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_outbound_batches_warehouse ON outbound_batches(warehouse_id)"
+    )
+    _rebuild_stock_boxes_per_warehouse(conn)
+
+
 def migrate_product_kind_backfill(conn: sqlite3.Connection) -> None:
     from app.product_kind import ProductKindNormalizer
     from app.settings import get_settings
@@ -204,6 +297,7 @@ MIGRATIONS: list[tuple[str, MigrationFn]] = [
     ("0004_indexes_and_status_cleanup", migrate_indexes_and_status_cleanup),
     ("0005_product_kind_backfill", migrate_product_kind_backfill),
     ("0006_shipments_freight_jpy", migrate_shipments_freight_jpy),
+    ("0007_warehouses", migrate_warehouses),
 ]
 
 MIGRATION_NAMES: tuple[str, ...] = tuple(name for name, _ in MIGRATIONS)

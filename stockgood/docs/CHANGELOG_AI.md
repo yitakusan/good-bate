@@ -15,16 +15,16 @@
 
 ## Current Development State
 
-最后更新：2026-10-06
+最后更新：2026-11-01
 
-当前产品版本：**0.10.11**
+当前产品版本：**0.13.0**
 
 新会话先读 `docs/AI_HANDOFF.md`，再按 FEATURE 打开 CODE_INDEX，不要全库扫描。
 
 ### 当前稳定功能
 
 - FEATURE: ORDER — 库存订单 + 明细
-- FEATURE: ORDER_IMPORT — 抓取导入（含 zozo 注文详情、&mall 注文履歴、vvstore 注文履歴详细、sofmap 商品页与お取引の詳細、cystore 購入履歴詳細、animate 注文履歴、eeo ご注文履歴詳細、lafary Shopify 注文详情、medicos EC-CUBE 購入履歴詳細、yostar SPA 商品 API / 注文 JSON、STORES `*.stores.jp` 商品 HTML / 購入詳細 HTML / 注文 JSON；订单后再抓同商品详情页可回填 JAN）。实现原理与各站解析：`docs/ORDER_IMPORT.md`
+- FEATURE: ORDER_IMPORT — 抓取导入（含 zozo 注文详情、&mall 注文履歴、vvstore 注文履歴详细、sofmap 商品页与お取引の詳細、cystore 購入履歴詳細、animate 注文履歴、eeo ご注文履歴詳細、lafary Shopify 注文详情、medicos EC-CUBE 購入履歴詳細、yostar SPA 商品 API / 已渲染ご注文履歴 / 注文 JSON、STORES `*.stores.jp` 商品 HTML / 購入詳細 HTML / 注文 JSON；订单后再抓同商品详情页可回填 JAN）。实现原理与各站解析：`docs/ORDER_IMPORT.md`
 - FEATURE: RETAILER_CART — Tab「模板加购」；Shopify / FutureShop / HMV 链接，MakeShop 与 asobi store 表单，按店打开对方购物车（不付款）
 - FEATURE: ORDER_REQUEST — 顾客申请（须登录、待付定金 30%）
 - FEATURE: INBOUND — 按订单进库
@@ -43,6 +43,20 @@
 
 ### 最近修复
 
+- **0.13.0**：浏览器插件只把当前页 HTML 交给已有 `POST /api/scrape`，不新增地址字段。服务未开时提示运行 `启动.bat`。`extension/注册拉起.bat` 登记本机拉起组件后，插件可自己启动 8002。解析规则仍在各站 Python 解析里，地址继续不入库。
+- **0.12.7**：Yostar OFFICIAL SHOP 已渲染的ご注文履歴可抓取导入。`.price-single` 是单价，`.price-total` 小计不是单价。摘要「送料」才是运费，手数料不算。同一页邮件正文不重复计行。不读配送信息、电话、邮箱、伝票番号。Ctrl+U 空壳和 Network JSON 路径不变。订单页无 JAN。
+- **0.12.6**：ゲーマーズ注文履歴可抓取导入。结构和アニメイト订单卡相近，但图文件名不是 JAN。解析后异步打开商品页，取店舗予約用バーコード。N点旁边金额是行小计。不读お届け先和配送伝票番号。多个注文番号不合并。
+- **0.12.5**：カドスト / ムービック購入履歴詳細没有商品图。解析后打开 `/shop/g/g{商品代码}/`，取 `img.js-img-source` 的 `/img/goods/L/`，没有则用含 `/img/goods/` 的 og:image。横幅不用。商品页失败时主图留空，单价、数量、运费不变。
+- **0.12.4**：BASE「ご注文情報照会」（`dynamic_receipts`）可抓取导入。商品単価是税込单价。`itemList__additionalInfo` 写进品名，同一 `/items/{id}` 的两个规格不合并。送料与合計金額分开，不用商品小计当合计。不读购买者、地址、电话、邮箱、运单号。前端键 `base:{host}:item:{id}:{品名}`。
+- **0.12.3**：ツインクル注文履歴与 store-gk / THEキャラ共用 MakeShop 解析。图床 `TwinCre` 识别为 `shop.twincre.com`。小计写着（税込）时单价不再乘 1.1。品名里的「2026年10月発送」写入预计发货年月。不读送付先。
+- **0.12.2**：进库「待进库」增加全部勾选。
+- **0.12.1**：Aniplex Online 注文詳細可抓取导入。単価（税込）为单价，行合计不是单价。商品代码不是 JAN。不读配送先姓名、地址、电话。一页两个注文番号不合并。
+- **0.12.0**：THEキャラ注文履歴与 store-gk 共用 MakeShop 解析。图床 `thechara55` 识别为 `the-chara.com`。单价税抜×1.1。store-gk 与 THEキャラ仍是税抜×1.1，不要套到ツインクル上。
+- **0.11.1**：新建仓库改为页头输入。原先 `window.prompt` 在内嵌窗口里会被拦住，点击没有可见结果。
+- **0.11.0**：仓库彼此独立，页头切换。订单、进库运单、在库箱、出库批次、财务月汇总只看当前仓库。旧数据归「默认仓库」。顾客申请不拆开，确认生成库存订单时进入当前仓库。在库箱号按仓库各自编号。
+- **0.10.14**：amnibus 注文卡片可抓取导入。数量旁价格为税込单价。无标价景品记 0。多笔卡片不合并。订单页无 JAN。
+- **0.10.13**：カドスト購入履歴詳細与ムービック共用解析。运费取整单送料。13 位商品代码校验通过才填条形码。配送表不重复计行。
+- **0.10.12**：ムービック購入履歴詳細可抓取导入。行合计÷数量为税込单价。手数料不算运费。列表页不解析。
 - **0.10.11**：Yahoo!购物注文履歴詳細可抓取导入。单价税込，同链接不同规格不合并。订单页无 JAN。
 - **0.10.10**：アニメイト注文履歴从商品图 `image={JAN}_...jpg` 填条形码，校验位不过则留空。
 - **0.10.9**：进库排在订单之前。库存步骤：抓取导入、模板加购、进库、订单、库存、出库。

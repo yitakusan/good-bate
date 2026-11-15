@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   /* Soft sage eye-care palette: low glare, muted greens */
   --bg: #e7efe4;
   --bg-panel: #f3f7f1;
@@ -98,6 +98,34 @@ textarea {
   margin: 4px 0 0;
   color: var(--muted);
   font-size: 0.95rem;
+}
+
+.warehouse-switch {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 0.9rem;
+}
+
+.warehouse-switch label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.warehouse-switch select {
+  min-width: 8rem;
+}
+
+.warehouse-create {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.warehouse-create input {
+  width: 8rem;
 }
 
 .tunnel-panel {

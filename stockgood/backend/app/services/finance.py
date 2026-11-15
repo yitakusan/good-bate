@@ -6,6 +6,7 @@ from typing import Any, Optional
 from fastapi import HTTPException
 
 from app.database import get_conn
+from app.warehouse_scope import warehouse_and
 
 # ============================================================
 # FEATURE: FINANCE
@@ -44,14 +45,16 @@ def month_summary(month: Optional[str] = None) -> dict[str, Any]:
     prefix = f"{month_key}%"
 
     with get_conn() as conn:
+        order_sql, order_params = warehouse_and("warehouse_id")
         orders = conn.execute(
-            """
+            f"""
             SELECT id, shipping_fee, exchange_rate
             FROM orders
             WHERE ordered_at LIKE ?
               AND status != 'cancelled'
+              {order_sql}
             """,
-            (prefix,),
+            (prefix, *order_params),
         ).fetchall()
 
         goods_jpy = 0.0
@@ -94,15 +97,17 @@ def month_summary(month: Optional[str] = None) -> dict[str, Any]:
                     goods_cny_sum += order_goods * rate
                 shipping_cny_sum += ship * rate
 
+        batch_sql, batch_params = warehouse_and("warehouse_id")
         batches = conn.execute(
-            """
+            f"""
             SELECT
                 goods_jpy, goods_receivable_cny, freight_cny,
                 amount_receivable_cny, amount_received_cny
             FROM outbound_batches
             WHERE created_at LIKE ?
+              {batch_sql}
             """,
-            (prefix,),
+            (prefix, *batch_params),
         ).fetchall()
 
         out_goods_jpy = 0.0

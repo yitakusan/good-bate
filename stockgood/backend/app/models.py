@@ -539,6 +539,16 @@ class StockBoxOut(BaseModel):
     orders: list[StockBoxOrderOut] = []
 
 
+class WarehouseOut(BaseModel):
+    id: int
+    name: str
+    created_at: str
+
+
+class WarehouseCreate(BaseModel):
+    name: str
+
+
 class StatsOut(BaseModel):
     ordered: int
     inbound_shipped: int

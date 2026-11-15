@@ -14,6 +14,7 @@ from app.services import action_log
 from app.services.order_status import sync_order_status
 from app.services.shipments import _shipment_with_items
 from app.services.stock_boxes import release_orders as release_stock_box_orders
+from app.warehouse_scope import ensure_visible, stamp_warehouse_id, warehouse_and
 
 # ============================================================
 # FEATURE: OUTBOUND_BATCH
@@ -169,8 +170,7 @@ def _batch_out(conn, batch_id: int) -> dict[str, Any]:
     batch = conn.execute(
         "SELECT * FROM outbound_batches WHERE id = ?", (batch_id,)
     ).fetchone()
-    if not batch:
-        raise HTTPException(status_code=404, detail="outbound batch not found")
+    ensure_visible(batch, "outbound batch not found")
     boxes = conn.execute(
         """
         SELECT id FROM shipments
@@ -218,9 +218,10 @@ def _batch_out(conn, batch_id: int) -> dict[str, Any]:
 def list_batches(limit: int = 50) -> list[dict[str, Any]]:
     limit = max(1, min(limit, 200))
     with get_conn() as conn:
+        wh_sql, wh_params = warehouse_and("warehouse_id")
         rows = conn.execute(
-            "SELECT id FROM outbound_batches ORDER BY id DESC LIMIT ?",
-            (limit,),
+            f"SELECT id FROM outbound_batches WHERE 1=1{wh_sql} ORDER BY id DESC LIMIT ?",
+            (*wh_params, limit),
         ).fetchall()
         return [_batch_out(conn, r["id"]) for r in rows]
 
@@ -500,8 +501,8 @@ def create_batch(
                 goods_jpy, order_shipping_jpy, goods_receivable_cny,
                 freight_exchange_rate, freight_unit_price_jpy, chargeable_weight,
                 freight_cny, amount_receivable_cny, amount_received_cny,
-                payment_status, payment_note, invoice_ship_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?)
+                payment_status, payment_note, invoice_ship_date, warehouse_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?)
             """,
             (
                 batch_note,
@@ -516,13 +517,20 @@ def create_batch(
                 receivable,
                 pay_status,
                 (invoice_ship_date or "").strip() or None,
+                stamp_warehouse_id(conn),
             ),
         )
         batch_id = int(cur.lastrowid)
         shipment_ids: list[int] = []
         item_restores: list[dict[str, Any]] = []
         order_restores = {
-            oid: conn.execute(
+            oid: ensure_visible(
+                conn.execute(
+                    "SELECT status, warehouse_id FROM orders WHERE id = ?", (oid,)
+                ).fetchone(),
+                "order not found",
+            )
+            or conn.execute(
                 "SELECT status FROM orders WHERE id = ?", (oid,)
             ).fetchone()["status"]
             for oid in order_ids
@@ -607,8 +615,7 @@ def update_finance(batch_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         batch = conn.execute(
             "SELECT * FROM outbound_batches WHERE id = ?", (batch_id,)
         ).fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="outbound batch not found")
+        ensure_visible(batch, "outbound batch not found")
 
         freight_rate = (
             float(data["freight_exchange_rate"])
@@ -810,8 +817,7 @@ def update_batch(
         batch = conn.execute(
             "SELECT * FROM outbound_batches WHERE id = ?", (batch_id,)
         ).fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="outbound batch not found")
+        ensure_visible(batch, "outbound batch not found")
 
         ships = conn.execute(
             """
@@ -1061,10 +1067,9 @@ def confirm_batch(batch_id: int) -> dict[str, Any]:
     """Confirm all shipped boxes in a batch as delivered (user signed)."""
     with get_conn() as conn:
         batch = conn.execute(
-            "SELECT id FROM outbound_batches WHERE id = ?", (batch_id,)
+            "SELECT id, warehouse_id FROM outbound_batches WHERE id = ?", (batch_id,)
         ).fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="outbound batch not found")
+        ensure_visible(batch, "outbound batch not found")
         ships = conn.execute(
             """
             SELECT id FROM shipments

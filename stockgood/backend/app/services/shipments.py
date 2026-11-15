@@ -10,6 +10,7 @@ from app.database import get_conn
 from app.services import action_log
 from app.services.order_status import group_items_by_order, sync_order_status
 from app.tracking_links import tracking_url
+from app.warehouse_scope import ensure_visible, shipment_scope_sql
 
 # ============================================================
 # FEATURE: INBOUND
@@ -45,6 +46,17 @@ def _shipment_with_items(conn, shipment_id: int) -> dict[str, Any]:
     ).fetchone()
     if not ship:
         raise HTTPException(status_code=404, detail="shipment not found")
+    scope = conn.execute(
+        """
+        SELECT COALESCE(o.warehouse_id, b.warehouse_id) AS warehouse_id
+        FROM shipments s
+        LEFT JOIN orders o ON o.id = s.order_id
+        LEFT JOIN outbound_batches b ON b.id = s.batch_id
+        WHERE s.id = ?
+        """,
+        (shipment_id,),
+    ).fetchone()
+    ensure_visible(scope, "shipment not found")
     items = conn.execute(
         """
         SELECT i.id, i.order_id, i.order_ref, i.name, i.shop, si.qty, i.status, i.barcode
@@ -80,6 +92,10 @@ def list_shipments(
     if direction:
         clauses.append("direction = ?")
         params.append(direction)
+    scope_sql, scope_params = shipment_scope_sql()
+    if scope_sql:
+        clauses.append(scope_sql)
+        params.extend(scope_params)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_conn() as conn:
         rows = conn.execute(
@@ -121,11 +137,10 @@ def create_inbound_for_order(
 
     with get_conn() as conn:
         order = conn.execute(
-            "SELECT id, order_ref, status FROM orders WHERE id = ?",
+            "SELECT id, order_ref, status, warehouse_id FROM orders WHERE id = ?",
             (order_id,),
         ).fetchone()
-        if not order:
-            raise HTTPException(status_code=404, detail="order not found")
+        ensure_visible(order, "order not found")
         if order["status"] == "cancelled":
             raise HTTPException(status_code=400, detail="order is cancelled")
 

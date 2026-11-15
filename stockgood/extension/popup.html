@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <title>Stockgood</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <strong>解析当前订单</strong>
+    <span id="status">正在检查本机服务…</span>
+  </header>
+  <p id="hint" hidden></p>
+  <p id="ext-id" hidden></p>
+  <div class="actions">
+    <button id="retry" type="button" hidden>再试一次</button>
+    <button id="start" type="button" hidden>拉起服务</button>
+  </div>
+  <section id="result" hidden></section>
+</body>
+<script src="popup.js"></script>
+</html>

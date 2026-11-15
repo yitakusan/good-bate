@@ -43,6 +43,7 @@ import {
   StockBox,
   TunnelStatus,
   UserRole,
+  type Warehouse,
   combineStockBox,
   confirmOrderRequest,
   confirmOutboundBatch,
@@ -78,9 +79,13 @@ import {
   fetchStockBoxes,
   fetchTunnelStatus,
   fetchUsers,
+  fetchWarehouses,
+  createWarehouse,
   startTunnel,
   stopTunnel,
   getAdminToken,
+  getWarehouseId,
+  setWarehouseId,
   logout,
   mergeStockBoxChild,
   rejectOrderRequest,
@@ -618,6 +623,10 @@ export default function App() {
   const [newUserRole, setNewUserRole] = useState<UserRole>("warehouse");
   const [newUserName, setNewUserName] = useState("");
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [warehouseId, setWarehouseIdState] = useState(() => getWarehouseId());
+  const [warehouseNaming, setWarehouseNaming] = useState(false);
+  const [warehouseNameDraft, setWarehouseNameDraft] = useState("");
   const [tunnelCopied, setTunnelCopied] = useState(false);
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -845,6 +854,15 @@ export default function App() {
       setStats(null);
       setLatestLog(null);
       return;
+    }
+    const list = await fetchWarehouses().catch(() => [] as Warehouse[]);
+    setWarehouses(list);
+    const stored = getWarehouseId();
+    const picked =
+      list.find((item) => String(item.id) === stored)?.id ?? list[0]?.id ?? null;
+    if (picked != null) {
+      setWarehouseId(picked);
+      setWarehouseIdState(String(picked));
     }
     const [nextStats, nextLog, kinds] = await Promise.all([
       fetchStats(),
@@ -2755,6 +2773,75 @@ function retailerCartCopyText(cart: RetailerCartShopCart): string {
         <div className="brand">
           <h1>Stockgood{meta?.is_shadow ? " · 测试" : ""}</h1>
           <p className="brand-flow">按步骤处理库存</p>
+          {warehouses.length > 0 && (
+            <div className="warehouse-switch">
+              <label>
+                仓库
+                <select
+                  value={warehouseId}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setWarehouseId(Number(next));
+                    setWarehouseIdState(next);
+                    void refresh();
+                  }}
+                >
+                  {warehouses.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {warehouseNaming ? (
+                <form
+                  className="warehouse-create"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const name = warehouseNameDraft.trim();
+                    if (!name) return;
+                    void (async () => {
+                      try {
+                        const created = await createWarehouse(name);
+                        setWarehouseId(created.id);
+                        setWarehouseIdState(String(created.id));
+                        setWarehouseNaming(false);
+                        setWarehouseNameDraft("");
+                        setMessage(`已切换到仓库 ${created.name}。这个仓库目前是空的。`);
+                        await refresh();
+                      } catch (err) {
+                        setError(errorText(err));
+                      }
+                    })();
+                  }}
+                >
+                  <input
+                    autoFocus
+                    value={warehouseNameDraft}
+                    placeholder="仓库名称"
+                    onChange={(e) => setWarehouseNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        setWarehouseNaming(false);
+                        setWarehouseNameDraft("");
+                      }
+                    }}
+                  />
+                  <button type="submit" className="btn">
+                    确定
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setWarehouseNaming(true)}
+                >
+                  新建仓库
+                </button>
+              )}
+            </div>
+          )}
           <div className="tunnel-panel">
             {/* FEATURE: TUNNEL — 页头 Cloudflare 临时隧道开关；docs/CODE_INDEX.md#feature-tunnel */}
             <div className="tunnel-controls" aria-label="隧道开关">
@@ -4135,6 +4222,24 @@ function retailerCartCopyText(cart: RetailerCartShopCart): string {
             勾选待进库行后点「确认进库」，直接变为在库。快递单号可选；多笔订单同时进库时请留空单号。
           </p>
           <h2>待进库</h2>
+          {inboundLines.length > 0 && (
+            <div className="toolbar order-select-bar">
+              <label className="check-inline">
+                <input
+                  type="checkbox"
+                  checked={inboundLines.every((line) =>
+                    selectedInboundIds.includes(line.id),
+                  )}
+                  onChange={(e) =>
+                    setSelectedInboundIds(
+                      e.target.checked ? inboundLines.map((line) => line.id) : [],
+                    )
+                  }
+                />
+                全部勾选
+              </label>
+            </div>
+          )}
           <div className="item-pick">
             {inboundLines.length === 0 ? (
               <div className="empty">没有可进库的订单行</div>

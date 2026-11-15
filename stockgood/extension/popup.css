@@ -1,0 +1,67 @@
+body {
+  margin: 0;
+  width: 380px;
+  font: 13px/1.45 "Segoe UI", "Microsoft YaHei", sans-serif;
+  color: #1c1c1c;
+  background: #f7f7f8;
+}
+header, #hint, #ext-id, .actions, #result {
+  padding: 10px 12px;
+}
+header {
+  background: #fff;
+  border-bottom: 1px solid #e4e4e7;
+}
+header strong {
+  display: block;
+  font-size: 14px;
+}
+#status {
+  color: #52525b;
+}
+#hint, #ext-id {
+  margin: 0;
+  color: #3f3f46;
+}
+#ext-id {
+  font-family: Consolas, monospace;
+  word-break: break-all;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 0;
+}
+button {
+  border: 1px solid #d4d4d8;
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+button.primary {
+  background: #18181b;
+  color: #fff;
+  border-color: #18181b;
+}
+#result {
+  background: #fff;
+  border-top: 1px solid #e4e4e7;
+  max-height: 420px;
+  overflow: auto;
+}
+.meta {
+  margin: 0 0 8px;
+  color: #3f3f46;
+}
+.line {
+  padding: 8px 0;
+  border-top: 1px solid #f0f0f1;
+}
+.line a {
+  color: #1d4ed8;
+  word-break: break-all;
+}
+.name {
+  font-weight: 600;
+}

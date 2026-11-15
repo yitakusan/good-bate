@@ -109,6 +109,32 @@ export function setAdminToken(token: string) {
   }
 }
 
+const WAREHOUSE_KEY = "stockgood.warehouseId";
+
+export function getWarehouseId(): string {
+  try {
+    return localStorage.getItem(WAREHOUSE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setWarehouseId(id: number | null) {
+  try {
+    if (id == null) localStorage.removeItem(WAREHOUSE_KEY);
+    else localStorage.setItem(WAREHOUSE_KEY, String(id));
+  } catch {
+    /* ignore */
+  }
+}
+
+function applyStaffHeaders(headers: Record<string, string>) {
+  const adminToken = getAdminToken();
+  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  const warehouseId = getWarehouseId();
+  if (warehouseId) headers["X-Warehouse-Id"] = warehouseId;
+}
+
 export interface TunnelStatus {
   running: boolean;
   url: string;
@@ -118,12 +144,11 @@ export interface TunnelStatus {
 export type ActionLog = ActionLogOut;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const adminToken = getAdminToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(init?.headers as Record<string, string> | undefined),
   };
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   const res = await fetch(path, {
     ...init,
     headers,
@@ -178,6 +203,23 @@ export function stopTunnel() {
 // ============================================================
 export function fetchMeta() {
   return request<AppMeta>("/api/meta");
+}
+
+export type Warehouse = {
+  id: number;
+  name: string;
+  created_at: string;
+};
+
+export function fetchWarehouses() {
+  return request<Warehouse[]>("/api/warehouses");
+}
+
+export function createWarehouse(name: string) {
+  return request<Warehouse>("/api/warehouses", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
 }
 
 // ============================================================
@@ -471,8 +513,7 @@ export function parseRetailerCartTemplate(file: File) {
   const fd = new FormData();
   fd.append("file", file);
   const headers: Record<string, string> = {};
-  const adminToken = getAdminToken();
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   return fetch("/api/retailer-cart/parse", {
     method: "POST",
     headers,
@@ -496,8 +537,7 @@ export function addRetailerCart(items: RetailerCartLine[]) {
 
 export function downloadRetailerCartTemplate() {
   const headers: Record<string, string> = {};
-  const adminToken = getAdminToken();
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   return fetch("/api/retailer-cart/template.csv", {
     headers,
     credentials: "include",
@@ -781,8 +821,7 @@ export function updateOutboundBatchFinance(
 // ============================================================
 export function downloadOutboundFeeDetail(id: number) {
   const headers: Record<string, string> = {};
-  const adminToken = getAdminToken();
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   return fetch(`/api/outbound-batches/${id}/fee-detail.xlsx`, {
     headers,
     credentials: "include",
@@ -856,8 +895,7 @@ async function downloadXlsxBlob(
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> | undefined),
   };
-  const adminToken = getAdminToken();
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   const res = await fetch(path, {
     ...init,
     headers,
