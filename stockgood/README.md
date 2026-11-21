@@ -31,8 +31,8 @@
 
 | 地址 / 账号 | 用途 |
 |---|---|
-| API `http://localhost:8003` | 影子库后端 |
-| 前端热更新 `http://localhost:5175` | 开发界面（**不要**用 `8003/apply` 看开发页） |
+| API `http://localhost:8002` | 后端（影子模式同端口，仅换库文件） |
+| 前端热更新 `http://localhost:5174` | 开发界面（**不要**用 `8002/apply` 看开发页） |
 | `customer@stockgood.local` / `Customer12` | 客户示例账号 |
 
 单元测试（不写生产库、不写共享影子库）：
@@ -70,6 +70,7 @@ cd backend
 | [`README.md`](README.md) | 项目是什么、如何运行 |
 | [`docs/CODE_INDEX.md`](docs/CODE_INDEX.md) | FEATURE 对应哪些代码、接口、数据库、页面 |
 | [`docs/CHANGELOG_AI.md`](docs/CHANGELOG_AI.md) | 为什么这么改、当前开发状态、Session Handoff |
+| [`docs/ORDER_IMPORT.md`](docs/ORDER_IMPORT.md) | 抓取商品链接实现原理与各站解析 |
 
 产品版本记录仍是 [`CHANGELOG.md`](CHANGELOG.md)，与 `CHANGELOG_AI.md` 职责不同。
 
@@ -89,7 +90,8 @@ deploy/            Docker / systemd
 
 | 目录 / 文件 | 用途 |
 |---|---|
-| `frontend/src/App.tsx` | 员工主界面（多 Tab，无独立出库页文件） |
+| `frontend/src/App.tsx` | 员工主界面（侧边分区导航、多 Tab，无独立出库页文件） |
+| `frontend/src/staff-ui.css` | 员工后台护眼配色、侧边导航与响应式样式 |
 | `frontend/src/ApplyPage.tsx` | 顾客申请 `/apply` |
 | `frontend/src/MePage.tsx` | 客户门户 `/me` |
 | `frontend/src/api.ts` | 前端全部 HTTP 封装 |
@@ -106,7 +108,8 @@ deploy/            Docker / systemd
 | USER_MANAGEMENT | 用户管理 | `App.tsx` Tab 用户 | `main.py` + `auth.py` | `/api/users*` | `users` |
 | CUSTOMER_PORTAL | 客户门户 | `/me` `MePage.tsx` | `order_requests.py` | `/api/me/order-requests*` | `order_requests` |
 | ORDER | 库存订单 | `App.tsx` Tab 订单 | `orders.py` / `items.py` | `/api/orders*`, `/api/items*` | `orders`, `items` |
-| ORDER_IMPORT | 抓取导入 | `App.tsx` Tab 抓取 | `scrapers/preview.py` | `POST /api/scrape` | `orders`, `items` |
+| ORDER_IMPORT | 抓取导入 | `App.tsx` Tab 抓取导入 | `scrapers/preview.py` | `POST /api/scrape` | `orders`, `items` |
+| RETAILER_CART | 模板加购 | `App.tsx` Tab 模板加购 | `retailer_cart.py` | `/api/retailer-cart*` | 无 |
 | ORDER_REQUEST | 顾客申请 | `/apply`；Tab 申请单 | `order_requests.py` | `/api/public/order-requests*` | `order_requests` |
 | INBOUND | 进库 | `App.tsx` Tab 进库 | `shipments.py` | `POST /api/orders/{id}/inbound` | `shipments` |
 | INVENTORY | 库存合箱 | `App.tsx` Tab 库存 | `stock_boxes.py` | `/api/stock-boxes*` | `stock_boxes` |
@@ -221,15 +224,17 @@ npm install
 在项目根目录运行：
 
 ```bat
-start.bat
+启动.bat
 ```
 
 后台静默启动（无常驻 CMD 窗口），日志在 `logs\`，并会打开浏览器。
 
+订单页可用浏览器插件 `extension/`：Chrome 或 Edge 加载该文件夹，在订单详情点图标。解析仍走本机 `POST /api/scrape`，不记录到货地址。服务没开时会提示先运行 `启动.bat`。若要让插件自己拉起，把弹窗里的扩展 ID 交给 `extension\注册拉起.bat`，只需做一次。
+
 #### 系统托盘（推荐日常 / 开机自启）
 
 ```bat
-start-tray.bat
+启动托盘.bat
 ```
 
 - 右下角托盘常驻（青绿色图标）
@@ -241,28 +246,28 @@ start-tray.bat
 开机自启（当前 Windows 用户，登录后启动托盘）：
 
 ```bat
-install-autostart.bat
+安装开机自启.bat
 ```
 
 取消自启：
 
 ```bat
-uninstall-autostart.bat
+卸载开机自启.bat
 ```
 
 | 启动 | 数据库 |
 |---|---|
-| `start.bat` | 实际库存 `stockgood.sqlite` |
-| `start-tray.bat` | 实际库存（托盘；可用环境变量 `STOCKGOOD_DB_MODE=shadow`） |
-| `start-shadow.bat` | 测试影子库 `stockgood.shadow.sqlite`（采购导入等，不参与实库存） |
+| `启动.bat` | 实际库存 `stockgood.sqlite` |
+| `启动托盘.bat` | 实际库存（托盘；可用环境变量 `STOCKGOOD_DB_MODE=shadow`） |
+| `启动影子库.bat` | 测试影子库 `stockgood.shadow.sqlite`（采购导入等，不参与实库存） |
 
 一键关闭：
 
 ```bat
-stop.bat
+停止.bat
 ```
 
-（托盘运行时也可用托盘「停止并退出」，或 `stop.bat` 后再关托盘。）
+（托盘运行时也可用托盘「停止并退出」，或 `停止.bat` 后再关托盘。）
 
 | 地址 | 用途 |
 |---|---|
@@ -271,21 +276,21 @@ stop.bat
 
 数据保存在 `backend/data/stockgood.sqlite`。已有数据库会在启动时把旧的 `in_transit` 状态迁移为 `inbound_shipped`。
 
-**自动备份**：`start.bat` / `stop.bat` 会各做一次 SQLite 快照，目录为 `backend/data/backups/`（文件名含时间与 `start`/`stop`；每种库最多保留约 30 份）。
+**自动备份**：`启动.bat` / `停止.bat` 会各做一次 SQLite 快照，目录为 `backend/data/backups/`（文件名含时间与 `start`/`stop`；每种库最多保留约 30 份）。
 
 ### 给国内朋友用（Cloudflare 临时隧道）
 
 日本 / 海外电脑跑本机服务，国内用浏览器打开，对方无需 VPN。
 
 1. 安装一次 [`cloudflared`](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/)（或 `winget install --id Cloudflare.cloudflared`）
-2. 双击根目录 **`start-tunnel.bat`**  
+2. 双击根目录 **`启动隧道.bat`**  
    - 若本机尚未启动，会自动后台拉起前后端，再开隧道  
    - 日志里找到 `https://xxxx.trycloudflare.com`，把该链接发给朋友  
-3. **保持隧道窗口开着**；关掉 = 链接失效。本地服务用 `stop.bat` 关闭  
+3. **保持隧道窗口开着**；关掉 = 链接失效。本地服务用 `停止.bat` 关闭  
 4. 临时 URL **每次重启都会变**；链接等于短暂公网入口，用完即关
 5. **发给顾客的链接必须带 `/apply`**：`<隧道域名>/apply`（页头点「复制申请页」即可）。不要发根路径，否则会打开库存管理。
 
-若出现 `Blocked request. This host is not allowed`：请重启前端（`stop.bat` 后再 `start.bat` / `start-tunnel.bat`）。`vite.config.ts` 已允许 `*.trycloudflare.com`。
+若出现 `Blocked request. This host is not allowed`：请重启前端（`停止.bat` 后再 `启动.bat` / `启动隧道.bat`）。`vite.config.ts` 已允许 `*.trycloudflare.com`。
 
 可选：在 `backend/.env` 设置 `STOCKGOOD_ADMIN_TOKEN=...`（兼容旧口令），或配置用户登录（见下）。公开 scrape / 提交申请有 IP 限流。
 

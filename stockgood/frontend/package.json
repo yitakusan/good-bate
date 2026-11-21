@@ -1,6 +1,6 @@
 {
   "name": "stockgood-frontend",
-  "version": "0.9.27",
+  "version": "0.13.1",
   "private": true,
   "type": "module",
   "scripts": {

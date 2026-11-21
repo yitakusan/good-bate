@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import shutil
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator, Optional
 
-from fastapi import Cookie, Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Cookie, Depends, FastAPI, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -30,7 +31,7 @@ from app.auth import (
     user_count,
     verify_password,
 )
-from app.database import DATA_DIR, get_db_path, init_db
+from app.database import DATA_DIR, get_conn, get_db_path, init_db
 from app.models import (
     ActionLogOut,
     ChangePasswordIn,
@@ -58,6 +59,9 @@ from app.models import (
     OutboundBatchUpdate,
     OutboundInvPreview,
     RegisterCustomerIn,
+    RetailerCartAddRequest,
+    RetailerCartAddResult,
+    RetailerCartParseResult,
     ScrapeRequest,
     ScrapeResult,
     SetActiveIn,
@@ -70,6 +74,8 @@ from app.models import (
     StockBoxOut,
     StockBoxUpdate,
     UserOut,
+    WarehouseCreate,
+    WarehouseOut,
 )
 from app.rate_limit import rate_limit
 from app.scrapers.preview import scrape_html_document, scrape_url
@@ -79,6 +85,7 @@ from app.services import finance as finance_svc
 from app.services import items as items_svc
 from app.services import order_requests as order_requests_svc
 from app.services import orders as orders_svc
+from app.services import warehouses as warehouses_svc
 from app.services import outbound_batches as outbound_svc
 from app.services import shipments as shipments_svc
 from app.services import stock_boxes as stock_boxes_svc
@@ -86,7 +93,7 @@ from app.settings import get_settings
 from app.tunnel_status import get_tunnel_status, start_tunnel, stop_tunnel
 
 ITEM_IMAGES_DIR = DATA_DIR / "item_images"
-APP_VERSION = "0.9.27"
+APP_VERSION = "0.13.1"
 
 # ============================================================
 # SHARED MODULE
@@ -105,6 +112,7 @@ OPENAPI_TAGS = [
     {"name": "订单", "description": "库存订单与明细行"},
     {"name": "货品", "description": "货品清单与批量创建"},
     {"name": "抓取", "description": "商品链接或页面 HTML 解析"},
+    {"name": "模板加购", "description": "导入模板预览；白名单站点加购（不结算）"},
     {"name": "进库", "description": "运单进库与到仓确认"},
     {"name": "库存合箱", "description": "在库订单合箱（不改变状态，与出库打包独立）"},
     {"name": "出库", "description": "出库批次与签收确认"},
@@ -149,6 +157,40 @@ app.mount(
     StaticFiles(directory=str(ITEM_IMAGES_DIR)),
     name="item_images",
 )
+
+
+@app.middleware("http")
+async def bind_warehouse(request: Request, call_next):
+    """Staff requests stay inside one warehouse. Missing header uses the first warehouse."""
+    from app.warehouse_scope import reset_current_warehouse_id, set_current_warehouse_id
+
+    token = None
+    if request.url.path.startswith("/api/"):
+        raw = (request.headers.get("x-warehouse-id") or "").strip()
+        chosen = None
+        try:
+            with get_conn() as conn:
+                if raw.isdigit():
+                    row = conn.execute(
+                        "SELECT id FROM warehouses WHERE id = ?", (int(raw),)
+                    ).fetchone()
+                    if row:
+                        chosen = int(row["id"])
+                if chosen is None:
+                    row = conn.execute(
+                        "SELECT MIN(id) AS id FROM warehouses"
+                    ).fetchone()
+                    if row and row["id"] is not None:
+                        chosen = int(row["id"])
+        except Exception:
+            chosen = None
+        if chosen is not None:
+            token = set_current_warehouse_id(chosen)
+    try:
+        return await call_next(request)
+    finally:
+        if token is not None:
+            reset_current_warehouse_id(token)
 
 
 # ============================================================
@@ -579,6 +621,20 @@ def reject_order_request(
 # [数据库] orders, items
 # [代码索引] docs/CODE_INDEX.md#feature-order
 # ============================================================
+@app.get("/api/warehouses", tags=["仓库"], summary="仓库列表", response_model=list[WarehouseOut])
+def list_warehouses(_: dict = Depends(require_staff)) -> list[dict]:
+    """可切换的仓库。各仓库的订单、在库和出库互不可见。"""
+    return warehouses_svc.list_warehouses()
+
+
+@app.post("/api/warehouses", tags=["仓库"], summary="新建仓库", response_model=WarehouseOut)
+def create_warehouse(
+    payload: WarehouseCreate, _: dict = Depends(require_staff)
+) -> dict:
+    """新建空仓库。已有数据留在默认仓库。"""
+    return warehouses_svc.create_warehouse(payload.name)
+
+
 @app.get("/api/stats", tags=["订单"], summary="状态统计", response_model=StatsOut)
 def stats(_: dict = Depends(require_staff)) -> dict:
     """各订单/货品状态数量汇总。"""
@@ -774,6 +830,73 @@ async def scrape(
         )
         detail = str(exc).strip() or type(exc).__name__
         raise HTTPException(status_code=502, detail=f"scrape failed: {detail}") from exc
+
+
+# ============================================================
+# FEATURE: RETAILER_CART
+#
+# [接口] GET /api/retailer-cart/template.csv
+#        POST /api/retailer-cart/parse
+#        POST /api/retailer-cart/add
+# [前端调用] App.tsx tab retailer-cart
+# [业务逻辑] backend/app/services/retailer_cart.py
+# [代码索引] docs/CODE_INDEX.md#feature-retailer_cart
+# ============================================================
+@app.get(
+    "/api/retailer-cart/template.csv",
+    tags=["模板加购"],
+    summary="下载加购模板 CSV",
+)
+def download_retailer_cart_template(_: dict = Depends(require_warehouse)) -> Response:
+    from app.services.retailer_cart import TEMPLATE_CSV
+
+    return Response(
+        content=TEMPLATE_CSV.encode("utf-8-sig"),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": "attachment; filename=retailer-cart-template.csv"
+        },
+    )
+
+
+@app.post(
+    "/api/retailer-cart/parse",
+    response_model=RetailerCartParseResult,
+    tags=["模板加购"],
+    summary="解析加购模板",
+)
+async def parse_retailer_cart_template(
+    file: UploadFile = File(...),
+    _: dict = Depends(require_warehouse),
+) -> dict:
+    from app.services.retailer_cart import parse_template
+
+    raw = await file.read()
+    try:
+        return await asyncio.to_thread(
+            parse_template, raw, file.filename or "", enrich=True
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@app.post(
+    "/api/retailer-cart/add",
+    response_model=RetailerCartAddResult,
+    tags=["模板加购"],
+    summary="按模板加入对方购物车",
+)
+def add_retailer_cart(
+    payload: RetailerCartAddRequest, _: dict = Depends(require_warehouse)
+) -> dict:
+    from app.services.retailer_cart import RetailerCartNotConnected, add_to_cart
+
+    try:
+        return add_to_cart([item.model_dump() for item in payload.items])
+    except RetailerCartNotConnected as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get(
@@ -1088,7 +1211,7 @@ def update_outbound_batch(
     """未签收前可改箱信息、商品归属与数量，并重算货款应收。"""
     return outbound_svc.update_batch(
         batch_id,
-        boxes=[b.model_dump() for b in payload.boxes],
+        boxes=[b.model_dump(exclude_unset=True) for b in payload.boxes],
         note=payload.note,
         allow_missing_barcode=payload.allow_missing_barcode,
         missing_barcode_note=payload.missing_barcode_note,
@@ -1186,6 +1309,53 @@ def export_outbound_inv_preview(
 ) -> Response:
     """创建出库批次前，按当前分箱草稿导出 INV 预览。"""
     content, filename = outbound_svc.export_inv_preview_xlsx(payload.model_dump())
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+# ============================================================
+# FEATURE: SF_EXPORT
+#
+# [接口] GET /api/outbound-batches/{batch_id}/sf.xlsx
+#        POST /api/outbound-batches/preview-sf.xlsx
+# [前端调用] downloadOutboundSf / downloadOutboundSfPreview  按钮「导出 SF」
+# [业务逻辑] sf_template.build_sf_workbook
+# [代码索引] docs/CODE_INDEX.md#feature-sf_export
+# ============================================================
+@app.get(
+    "/api/outbound-batches/{batch_id}/sf.xlsx",
+    tags=["出库"],
+    summary="导出 SF 申报单",
+)
+def export_outbound_sf(
+    batch_id: int, _: dict = Depends(require_staff)
+) -> Response:
+    """导出顺丰申报 Excel（单表列格式，与业务样表一致）。"""
+    content, filename = outbound_svc.export_sf_xlsx(batch_id)
+    return Response(
+        content=content,
+        media_type=(
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        ),
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post(
+    "/api/outbound-batches/preview-sf.xlsx",
+    tags=["出库"],
+    summary="草稿预览导出 SF",
+)
+def export_outbound_sf_preview(
+    payload: OutboundInvPreview, _: dict = Depends(require_warehouse)
+) -> Response:
+    """创建出库批次前，按当前分箱草稿导出 SF 预览。"""
+    content, filename = outbound_svc.export_sf_preview_xlsx(payload.model_dump())
     return Response(
         content=content,
         media_type=(

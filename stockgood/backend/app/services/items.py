@@ -10,6 +10,7 @@ from app.models import ItemCreate, ItemUpdate, LineCreate, OrderCreate
 from app.services import action_log
 from app.services import orders as orders_svc
 from app.services.order_status import sync_order_status
+from app.warehouse_scope import ensure_visible, stamp_warehouse_id, warehouse_and
 from app.services.orders import (
     _attach_line_shipments,
     _insert_line,
@@ -62,6 +63,10 @@ def list_items(
             )
         clauses.append("i.expected_ship_at = ?")
         params.append(month)
+    wh_sql, wh_params = warehouse_and("o.warehouse_id")
+    if wh_sql:
+        clauses.append(wh_sql.removeprefix(" AND "))
+        params.extend(wh_params)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     sql = f"""
@@ -83,15 +88,15 @@ def get_item(item_id: int) -> dict[str, Any]:
     with get_conn() as conn:
         row = conn.execute(
             """
-            SELECT i.*, o.order_qty AS order_qty, o.order_image_url AS order_image_url
+            SELECT i.*, o.order_qty AS order_qty, o.order_image_url AS order_image_url,
+                   o.warehouse_id AS warehouse_id
             FROM items i
             LEFT JOIN orders o ON o.id = i.order_id
             WHERE i.id = ?
             """,
             (item_id,),
         ).fetchone()
-        if not row:
-            raise HTTPException(status_code=404, detail="item not found")
+        ensure_visible(row, "item not found")
         return _attach_line_shipments(conn, dict(row))
 
 
@@ -157,8 +162,8 @@ def create_items_batch(payloads: list[ItemCreate]) -> list[dict[str, Any]]:
                 """
                 INSERT INTO orders (
                     order_ref, shop, status, ordered_at, order_qty, order_image_url,
-                    note, expected_ship_at, expected_ship_period
-                ) VALUES (?, ?, 'ordered', ?, ?, ?, ?, ?, ?)
+                    note, expected_ship_at, expected_ship_period, warehouse_id
+                ) VALUES (?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     ref,
@@ -169,6 +174,7 @@ def create_items_batch(payloads: list[ItemCreate]) -> list[dict[str, Any]]:
                     first.note.strip(),
                     expected_ship_at,
                     expected_ship_period,
+                    stamp_warehouse_id(conn),
                 ),
             )
             order_id = int(cur.lastrowid)
@@ -203,8 +209,8 @@ def create_items_batch(payloads: list[ItemCreate]) -> list[dict[str, Any]]:
                 """
                 INSERT INTO orders (
                     order_ref, shop, status, ordered_at, order_qty, order_image_url,
-                    note, expected_ship_at, expected_ship_period
-                ) VALUES ('', ?, 'ordered', ?, ?, ?, ?, ?, ?)
+                    note, expected_ship_at, expected_ship_period, warehouse_id
+                ) VALUES ('', ?, 'ordered', ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     item.shop.strip(),
@@ -214,6 +220,7 @@ def create_items_batch(payloads: list[ItemCreate]) -> list[dict[str, Any]]:
                     item.note.strip(),
                     expected_ship_at,
                     expected_ship_period,
+                    stamp_warehouse_id(conn),
                 ),
             )
             order_id = int(cur.lastrowid)

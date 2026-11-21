@@ -1,7 +1,7 @@
 // ============================================================
 // SHARED MODULE（员工主界面）
 //
-// [用途] 单页多 Tab：订单 / 财务 / 统计 / 申请单 / 抓取 / 进库 / 库存 / 出库 / 日志 / 用户
+// [用途] 单页分区导航：库存（抓取导入→模板加购→进库→订单→库存→出库）/ 顾客 / 账目 / 系统
 // [页面] frontend/src/App.tsx（无独立 *Page.tsx 出库页）
 // [前端 API] frontend/src/api.ts
 // [后端] backend/app/main.py
@@ -16,6 +16,7 @@ import {
   looksLikeHtmlOrJsonPaste,
   normalizeHtmlPaste,
   parseScrapeUrls,
+  SCRAPE_SITE_GUIDE,
   scrapeProductMatchKey,
 } from "./scrapePaste";
 import {
@@ -29,15 +30,20 @@ import {
   ItemStatus,
   Line,
   Order,
+  OrderCreate,
   OrderRequest,
   OrderRequestStatus,
   OutboundBatch,
+  RetailerCartLine,
+  RetailerCartParseResult,
+  RetailerCartShopCart,
   ScrapeProduct,
   Shipment,
   Stats,
   StockBox,
   TunnelStatus,
   UserRole,
+  type Warehouse,
   combineStockBox,
   confirmOrderRequest,
   confirmOutboundBatch,
@@ -51,6 +57,11 @@ import {
   downloadOutboundFeeDetail,
   downloadOutboundInv,
   downloadOutboundInvPreview,
+  downloadOutboundSf,
+  downloadOutboundSfPreview,
+  downloadRetailerCartTemplate,
+  addRetailerCart,
+  parseRetailerCartTemplate,
   addStockBoxOrders,
   fetchActionLogs,
   fetchApplyReport,
@@ -68,9 +79,13 @@ import {
   fetchStockBoxes,
   fetchTunnelStatus,
   fetchUsers,
+  fetchWarehouses,
+  createWarehouse,
   startTunnel,
   stopTunnel,
   getAdminToken,
+  getWarehouseId,
+  setWarehouseId,
   logout,
   mergeStockBoxChild,
   rejectOrderRequest,
@@ -87,6 +102,7 @@ import {
   updateStockBox,
 } from "./api";
 import { batchScrapeDelayMs, waitForBatchScrape } from "./scrapeDelay";
+import "./staff-ui.css";
 
 type Tab =
   | "orders"
@@ -94,22 +110,209 @@ type Tab =
   | "reports"
   | "requests"
   | "scrape"
+  | "retailer-cart"
   | "inbound"
   | "inventory"
   | "outbound"
   | "logs"
   | "users";
+
+const NAV_SECTIONS: {
+  id: string;
+  label: string;
+  hint: string;
+  items: [Tab, string][];
+}[] = [
+  {
+    id: "flow",
+    label: "库存",
+    hint: "先进货、进库，再登记订单。在库后再出库。模板加购只打开对方购物车。",
+    items: [
+      ["scrape", "抓取导入"],
+      ["retailer-cart", "模板加购"],
+      ["inbound", "进库"],
+      ["orders", "订单"],
+      ["inventory", "库存"],
+      ["outbound", "出库"],
+    ],
+  },
+  {
+    id: "customer",
+    label: "顾客",
+    hint: "处理顾客在 /apply 提交的申请。",
+    items: [["requests", "申请单"]],
+  },
+  {
+    id: "money",
+    label: "账目",
+    hint: "查看金额和数量汇总。",
+    items: [
+      ["finance", "财务"],
+      ["reports", "统计"],
+    ],
+  },
+  {
+    id: "system",
+    label: "系统",
+    hint: "查看操作记录，管理员可管理账号。",
+    items: [
+      ["logs", "操作日志"],
+      ["users", "用户"],
+    ],
+  },
+];
+
+const NAV_ICONS: Record<Tab, string> = {
+  scrape: "⌕",
+  "retailer-cart": "▣",
+  inbound: "⇥",
+  orders: "▤",
+  inventory: "▧",
+  outbound: "⇤",
+  requests: "♧",
+  finance: "◫",
+  reports: "▥",
+  logs: "≡",
+  users: "♙",
+};
+
+function tabAllowed(key: Tab, role: string | undefined): boolean {
+  if (key === "users") return role === "admin";
+  if (key === "finance" || key === "reports") {
+    return !role || role === "admin" || role === "finance" || role === "warehouse";
+  }
+  if (
+    role === "finance" &&
+    (key === "scrape" ||
+      key === "retailer-cart" ||
+      key === "inbound" ||
+      key === "inventory" ||
+      key === "outbound")
+  ) {
+    return false;
+  }
+  return true;
+}
 const REQUEST_STATUS_LABEL: Record<OrderRequestStatus, string> = {
   pending_payment: "待付定金",
   submitted: "已提交",
   ordered: "已下单",
   rejected: "已拒绝",
 };
+const CART_SKIP_LABEL: Record<string, string> = {
+  empty_url: "空链接",
+  invalid_url: "链接无效",
+  host_not_allowed: "不在白名单站点",
+  not_product_page: "不是该店商品页",
+  qty_invalid: "数量无效",
+};
+
+function CompactCopyLinkButton({
+  url,
+  label = "复制链接",
+}: {
+  url: string;
+  label?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+  const text = (url || "").trim();
+  if (!text) return null;
+  return (
+    <button
+      type="button"
+      className="btn"
+      onClick={() => {
+        void navigator.clipboard.writeText(text).then(() => {
+          setCopied(true);
+          window.setTimeout(() => setCopied(false), 1500);
+        });
+      }}
+    >
+      {copied ? "已复制" : label}
+    </button>
+  );
+}
+
+function groupRetailerCartLines(lines: RetailerCartLine[]): [string, RetailerCartLine[]][] {
+  const map = new Map<string, RetailerCartLine[]>();
+  for (const row of lines) {
+    const shop = row.shop || "unknown";
+    const list = map.get(shop) || [];
+    list.push(row);
+    map.set(shop, list);
+  }
+  return Array.from(map.entries());
+}
+
+function retailerShopMeta(
+  shop: string,
+  shops?: { host: string; label: string; kind?: string; tax?: string }[],
+) {
+  const hit = shops?.find((s) => s.host === shop);
+  const tax = hit?.tax === "exclusive" ? "exclusive" : "inclusive";
+  return {
+    label: hit?.label || shop,
+    kind: hit?.kind || "shopify",
+    tax,
+    taxHint: tax === "exclusive" ? "税抜×1.1" : "税込",
+    kindLabel:
+      hit?.kind === "futureshop"
+        ? "FutureShop"
+        : hit?.kind === "makeshop"
+          ? "MakeShop"
+          : hit?.kind === "asobi"
+            ? "asobi"
+            : hit?.kind === "hmv"
+              ? "HMV"
+              : "Shopify",
+  };
+}
+
+function retailerCartToOrderCreate(
+  rows: RetailerCartLine[],
+  orderRef: string,
+  totalJpy: number,
+): OrderCreate {
+  const shop = (rows[0]?.shop || "").trim() || "bushiroad-store.com";
+  const lines = rows.map((row) => ({
+    name: (row.name || row.product_id || "").trim() || "未命名商品",
+    shop: row.shop || shop,
+    qty: Math.max(1, Number(row.qty) || 1),
+    unit_cost:
+      row.unit_cost != null && !Number.isNaN(Number(row.unit_cost))
+        ? Number(row.unit_cost)
+        : null,
+    image_url: row.image_url || "",
+    source_url: row.source_url || "",
+  }));
+  const qtySum = lines.reduce((sum, line) => sum + line.qty, 0);
+  let goods = 0;
+  let priced = false;
+  for (const line of lines) {
+    if (line.unit_cost != null) {
+      goods += line.unit_cost * line.qty;
+      priced = true;
+    }
+  }
+  const shipping = priced
+    ? Math.max(0, Math.round((totalJpy - goods) * 100) / 100)
+    : Math.round(totalJpy * 100) / 100;
+  return {
+    order_ref: orderRef.trim(),
+    shop,
+    order_qty: qtySum,
+    shipping_fee: shipping,
+    note: `对方总价 JPY ${totalJpy}`,
+    lines,
+  };
+}
+
 type DraftBox = {
   uid: string;
   box_no: number;
   carrier: Carrier;
   tracking_no: string;
+  freight_jpy: string;
   note: string;
   item_ids: number[];
   net_weight: string;
@@ -130,6 +333,7 @@ type BatchEditBox = {
   box_no: number;
   carrier: Carrier;
   tracking_no: string;
+  freight_jpy: string;
   note: string;
   items: BatchEditItem[];
   net_weight: string;
@@ -264,6 +468,7 @@ function loadOutboundDraft(): OutboundDraftPersisted | null {
             ? box.carrier
             : ("other" as Carrier),
         tracking_no: String(box?.tracking_no || ""),
+        freight_jpy: String(box?.freight_jpy || ""),
         note: String(box?.note || ""),
         item_ids: Array.isArray(box?.item_ids)
           ? box.item_ids.map((id) => Number(id)).filter((id) => id > 0)
@@ -433,6 +638,10 @@ export default function App() {
   const [newUserRole, setNewUserRole] = useState<UserRole>("warehouse");
   const [newUserName, setNewUserName] = useState("");
   const [tunnel, setTunnel] = useState<TunnelStatus | null>(null);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [warehouseId, setWarehouseIdState] = useState(() => getWarehouseId());
+  const [warehouseNaming, setWarehouseNaming] = useState(false);
+  const [warehouseNameDraft, setWarehouseNameDraft] = useState("");
   const [tunnelCopied, setTunnelCopied] = useState(false);
   const [tunnelBusy, setTunnelBusy] = useState(false);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -469,6 +678,7 @@ export default function App() {
   const [shipMonthFilter, setShipMonthFilter] = useState("");
   const [q, setQ] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [orderSearchOpen, setOrderSearchOpen] = useState(false);
   const [form, setForm] = useState(EMPTY_FORM);
   const [selectedOrderIds, setSelectedOrderIds] = useState<number[]>([]);
   const [expandedOrderIds, setExpandedOrderIds] = useState<number[]>([]);
@@ -498,6 +708,16 @@ export default function App() {
   const [collectionPrice, setCollectionPrice] = useState<Record<number, string>>(
     {},
   );
+  const [retailerCartBusy, setRetailerCartBusy] = useState(false);
+  const [retailerCartPreview, setRetailerCartPreview] =
+    useState<RetailerCartParseResult | null>(null);
+  const [retailerCartPermalink, setRetailerCartPermalink] = useState("");
+  const [retailerCartPermalinks, setRetailerCartPermalinks] = useState<
+    Record<string, string>
+  >({});
+  const [retailerCartOrderDrafts, setRetailerCartOrderDrafts] = useState<
+    Record<string, { ref: string; total: string }>
+  >({});
   const [batchExpectedShip, setBatchExpectedShip] = useState("");
   const [batchExpectedPeriod, setBatchExpectedPeriod] = useState<
     "" | ExpectedShipPeriod
@@ -649,6 +869,15 @@ export default function App() {
       setStats(null);
       setLatestLog(null);
       return;
+    }
+    const list = await fetchWarehouses().catch(() => [] as Warehouse[]);
+    setWarehouses(list);
+    const stored = getWarehouseId();
+    const picked =
+      list.find((item) => String(item.id) === stored)?.id ?? list[0]?.id ?? null;
+    if (picked != null) {
+      setWarehouseId(picked);
+      setWarehouseIdState(String(picked));
     }
     const [nextStats, nextLog, kinds] = await Promise.all([
       fetchStats(),
@@ -1281,6 +1510,216 @@ export default function App() {
     }
   }
 
+  async function onParseRetailerCart(file: File | undefined) {
+    if (!file) {
+      setError("请选择 CSV 或 xlsx 模板");
+      return;
+    }
+    setRetailerCartBusy(true);
+    setError("");
+    setMessage("正在解析加购模板…");
+    try {
+      const parsed = await parseRetailerCartTemplate(file);
+      setRetailerCartPreview(parsed);
+      setRetailerCartPermalink("");
+      setRetailerCartPermalinks({});
+      setRetailerCartOrderDrafts({});
+      setMessage(parsed.message);
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setRetailerCartBusy(false);
+    }
+  }
+
+function retailerCartWindowName(shop: string) {
+  return `stockgood-cart-${shop.replace(/[^a-z0-9]+/gi, "-")}`;
+}
+
+function submitRetailerCartPost(
+  action: string,
+  fields: Record<string, string>,
+  target: string,
+) {
+  const form = document.createElement("form");
+  form.method = "post";
+  form.action = action;
+  form.target = target;
+  form.acceptCharset = "UTF-8";
+  for (const [name, value] of Object.entries(fields)) {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
+  }
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
+}
+
+function openRetailerShopCart(cart: RetailerCartShopCart): boolean {
+  const target = retailerCartWindowName(cart.shop || "shop");
+  if (cart.method === "post" && cart.posts && cart.posts.length) {
+    const posts = cart.posts;
+    submitRetailerCartPost(posts[0].action, posts[0].fields, target);
+    posts.slice(1).forEach((post, index) => {
+      window.setTimeout(() => {
+        submitRetailerCartPost(post.action, post.fields, target);
+      }, (index + 1) * 1200);
+    });
+    return true;
+  }
+  const urls = (
+    cart.cart_urls && cart.cart_urls.length ? cart.cart_urls : [cart.cart_url]
+  ).filter((url) => (url || "").trim());
+  if (!urls.length) return false;
+  const opened = window.open(urls[0], target);
+  if (!opened) return false;
+  let delay = 1200;
+  let previous = urls[0];
+  urls.slice(1).forEach((url) => {
+    if (url === previous) {
+      const blankAt = delay;
+      window.setTimeout(() => {
+        opened.location.href = "about:blank";
+      }, blankAt);
+      delay += 400;
+    }
+    const openAt = delay;
+    window.setTimeout(() => {
+      opened.location.href = url;
+    }, openAt);
+    delay += 1200;
+    previous = url;
+  });
+  return true;
+}
+
+function retailerCartCopyText(cart: RetailerCartShopCart): string {
+  if (cart.method === "post") return "";
+  const urls = (
+    cart.cart_urls && cart.cart_urls.length ? cart.cart_urls : [cart.cart_url]
+  )
+    .map((url) => (url || "").trim())
+    .filter(Boolean);
+  return urls.join("\n");
+}
+
+  async function onAddRetailerCart(shop?: string) {
+    const all = retailerCartPreview?.eligible || [];
+    const items = shop ? all.filter((row) => row.shop === shop) : all;
+    if (!items.length) {
+      setError("没有白名单可加购行。请先上传模板并解析。");
+      return;
+    }
+    setRetailerCartBusy(true);
+    setError("");
+    try {
+      const result = await addRetailerCart(items);
+      const carts =
+        result.carts && result.carts.length
+          ? result.carts
+          : result.cart_url
+            ? [
+                {
+                  shop: items[0]?.shop || "",
+                  label: items[0]?.shop || "",
+                  cart_url: result.cart_url,
+                  items: result.items || items,
+                },
+              ]
+            : [];
+      const nextLinks: Record<string, string> = {};
+      let openedAny = false;
+      for (const cart of carts) {
+        const copyText = retailerCartCopyText(cart);
+        if (cart.shop && copyText) nextLinks[cart.shop] = copyText;
+        if (openRetailerShopCart(cart)) openedAny = true;
+      }
+      setRetailerCartPermalinks((current) => ({ ...current, ...nextLinks }));
+      const firstUrl = (Object.values(nextLinks)[0] || "").split("\n")[0];
+      setRetailerCartPermalink(firstUrl);
+      if (!carts.length) {
+        setMessage(result.message || "已处理加购请求");
+      } else {
+        setMessage(
+          openedAny
+            ? result.message || "已按店铺打开对方购物车，请核对。"
+            : `${result.message || "已生成购物车链接。"}浏览器拦截了新标签，请用复制按钮打开。`,
+        );
+      }
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setRetailerCartBusy(false);
+    }
+  }
+
+  async function onCreateRetailerCartOrder(shop: string) {
+    const items = (retailerCartPreview?.eligible || []).filter(
+      (row) => row.shop === shop,
+    );
+    if (!items.length) {
+      setError("该店铺没有可加购行。");
+      return;
+    }
+    const draft = retailerCartOrderDrafts[shop] || { ref: "", total: "" };
+    const orderRef = draft.ref.trim();
+    const totalRaw = draft.total.trim().replace(/,/g, "");
+    if (!orderRef || !totalRaw) {
+      setError("请填写该店订单号和总价后再生成库存订单");
+      return;
+    }
+    const totalJpy = Number(totalRaw);
+    if (!Number.isFinite(totalJpy) || totalJpy < 0) {
+      setError("总价须为不小于 0 的数字");
+      return;
+    }
+    setRetailerCartBusy(true);
+    setError("");
+    try {
+      const created = await createOrder(
+        retailerCartToOrderCreate(items, orderRef, totalJpy),
+      );
+      const remain = (retailerCartPreview?.eligible || []).filter(
+        (row) => row.shop !== shop,
+      );
+      if (remain.length) {
+        setRetailerCartPreview({
+          ...retailerCartPreview!,
+          eligible: remain,
+        });
+        setRetailerCartOrderDrafts((current) => {
+          const next = { ...current };
+          delete next[shop];
+          return next;
+        });
+        setRetailerCartPermalinks((current) => {
+          const next = { ...current };
+          delete next[shop];
+          return next;
+        });
+      } else {
+        setRetailerCartPreview(null);
+        setRetailerCartPermalink("");
+        setRetailerCartPermalinks({});
+        setRetailerCartOrderDrafts({});
+      }
+      setMessage(
+        `已生成库存订单「${created.order_ref || orderRef}」#${created.id}（${created.shop || shop}），含 ${created.line_count || items.length} 行明细`,
+      );
+      if (!remain.length) {
+        setTab("orders");
+      }
+      await refresh();
+    } catch (err) {
+      setError(errorText(err));
+    } finally {
+      setRetailerCartBusy(false);
+    }
+  }
+
   function toggleInboundLine(lineId: number) {
     setSelectedInboundIds((current) =>
       current.includes(lineId)
@@ -1608,8 +2047,8 @@ export default function App() {
       uid: newDraftBoxUid(),
       box_no: startNo + index,
       carrier: "other" as Carrier,
-      tracking_no:
-        draftBoxes.find((box) => box.tracking_no.trim())?.tracking_no || "",
+      tracking_no: "",
+      freight_jpy: "",
       note: "",
       item_ids: groups.get(key) || [],
       ...emptyPackingFields(),
@@ -1646,8 +2085,8 @@ export default function App() {
           ? Math.max(...current.map((box) => box.box_no)) + 1
           : 1,
         carrier: "other" as Carrier,
-        tracking_no:
-          current.find((box) => box.tracking_no.trim())?.tracking_no || "",
+        tracking_no: "",
+        freight_jpy: "",
         note: "",
         item_ids: ids,
         ...emptyPackingFields(),
@@ -1695,13 +2134,9 @@ export default function App() {
 
   function updateDraftBox(index: number, patch: Partial<DraftBox>) {
     setDraftBoxes((current) =>
-      current.map((box, boxIndex) => {
-        const next = boxIndex === index ? { ...box, ...patch } : box;
-        if (patch.tracking_no !== undefined) {
-          return { ...next, tracking_no: patch.tracking_no };
-        }
-        return next;
-      }),
+      current.map((box, boxIndex) =>
+        boxIndex === index ? { ...box, ...patch } : box,
+      ),
     );
   }
 
@@ -1740,8 +2175,8 @@ export default function App() {
       );
       return;
     }
-    if (draftBoxes.every((box) => !box.tracking_no.trim())) {
-      setError("请填写本批次运单号");
+    if (draftBoxes.some((box) => !box.tracking_no.trim())) {
+      setError("请为每一箱填写运单号");
       return;
     }
     const noBarcode = stockLines.filter(
@@ -1779,15 +2214,13 @@ export default function App() {
       return;
     }
     try {
-      const batchTracking =
-        draftBoxes.find((box) => box.tracking_no.trim())?.tracking_no.trim() ||
-        "";
       await createOutboundBatch({
         note: batchNote.trim(),
         boxes: draftBoxes.map((box) => ({
           box_no: box.box_no,
           carrier: box.carrier,
-          tracking_no: batchTracking,
+          tracking_no: box.tracking_no.trim(),
+          freight_jpy: parseOptionalNonNeg(box.freight_jpy),
           note: box.note.trim(),
           item_ids: box.item_ids,
           ...packingPayloadFromStrings(box),
@@ -1935,6 +2368,7 @@ export default function App() {
         box_no: box.box_no,
         carrier: box.carrier,
         tracking_no: box.tracking_no,
+        freight_jpy: numOrEmpty(box.freight_jpy),
         note: box.note || "",
         items: box.items.map((item) => ({
           item_id: item.id,
@@ -1961,13 +2395,7 @@ export default function App() {
 
   function updateBatchEditBox(index: number, patch: Partial<BatchEditBox>) {
     setBatchEditBoxes((current) =>
-      current.map((box, i) => {
-        const next = i === index ? { ...box, ...patch } : box;
-        if (patch.tracking_no !== undefined) {
-          return { ...next, tracking_no: patch.tracking_no };
-        }
-        return next;
-      }),
+      current.map((box, i) => (i === index ? { ...box, ...patch } : box)),
     );
   }
 
@@ -2017,8 +2445,8 @@ export default function App() {
       setError("编辑后至少保留一箱");
       return;
     }
-    if (batchEditBoxes.every((box) => !box.tracking_no.trim())) {
-      setError("请填写本批次运单号");
+    if (batchEditBoxes.some((box) => !box.tracking_no.trim())) {
+      setError("请为每一箱填写运单号");
       return;
     }
     if (batchEditBoxes.some((box) => !box.items.length)) {
@@ -2028,16 +2456,14 @@ export default function App() {
     setBatchEditBusy(true);
     setError("");
     try {
-      const batchTracking =
-        batchEditBoxes.find((box) => box.tracking_no.trim())?.tracking_no.trim() ||
-        "";
       await updateOutboundBatch(editingBatchId, {
         note: batchEditNote,
         invoice_ship_date: batchEditInvoiceShipDate.trim() || null,
         boxes: batchEditBoxes.map((box) => ({
           box_no: box.box_no,
           carrier: box.carrier,
-          tracking_no: batchTracking,
+          tracking_no: box.tracking_no.trim(),
+          freight_jpy: parseOptionalNonNeg(box.freight_jpy),
           note: box.note.trim(),
           items: box.items.map((item) => ({
             item_id: item.item_id,
@@ -2061,8 +2487,8 @@ export default function App() {
       setError("请先完成分箱后再导出 INV");
       return;
     }
-    if (draftBoxes.every((box) => !box.tracking_no.trim())) {
-      setError("导出 INV 前请填写本批次运单号");
+    if (draftBoxes.some((box) => !box.tracking_no.trim())) {
+      setError("导出 INV 前请为每一箱填写运单号");
       return;
     }
     if (draftBoxes.some((box) => !packingFieldsComplete(box))) {
@@ -2076,15 +2502,13 @@ export default function App() {
     const unitPrice = unitRaw === "" ? null : Number(unitRaw);
     const weight = weightRaw === "" ? null : Number(weightRaw);
     try {
-      const batchTracking =
-        draftBoxes.find((box) => box.tracking_no.trim())?.tracking_no.trim() ||
-        "";
       await downloadOutboundInvPreview({
         note: batchNote.trim(),
         boxes: draftBoxes.map((box) => ({
           box_no: box.box_no,
           carrier: box.carrier,
-          tracking_no: batchTracking,
+          tracking_no: box.tracking_no.trim(),
+          freight_jpy: parseOptionalNonNeg(box.freight_jpy),
           note: box.note.trim(),
           item_ids: box.item_ids,
           ...packingPayloadFromStrings(box),
@@ -2095,6 +2519,31 @@ export default function App() {
         invoice_ship_date: invoiceShipDate.trim() || todayIsoDate(),
       });
       setMessage("已导出 INV 预览（创建出库批次前）");
+      setError("");
+    } catch (err) {
+      setError(errorText(err));
+    }
+  }
+
+  async function onExportDraftSf() {
+    if (!draftBoxes.length) {
+      setError("请先完成分箱后再导出 SF");
+      return;
+    }
+    try {
+      await downloadOutboundSfPreview({
+        note: batchNote.trim(),
+        boxes: draftBoxes.map((box) => ({
+          box_no: box.box_no,
+          carrier: box.carrier,
+          tracking_no: box.tracking_no.trim() || "-",
+          note: box.note.trim(),
+          item_ids: box.item_ids,
+          ...packingPayloadFromStrings(box),
+        })),
+        invoice_ship_date: invoiceShipDate.trim() || todayIsoDate(),
+      });
+      setMessage("已导出 SF 预览（创建出库批次前）");
       setError("");
     } catch (err) {
       setError(errorText(err));
@@ -2338,7 +2787,76 @@ export default function App() {
       <header className="top">
         <div className="brand">
           <h1>Stockgood{meta?.is_shadow ? " · 测试" : ""}</h1>
-          <p className="brand-flow">订单 → 进库 → 库存 → 出库 → 签收</p>
+          <p className="brand-flow">按步骤处理库存</p>
+          {warehouses.length > 0 && (
+            <div className="warehouse-switch">
+              <label>
+                仓库
+                <select
+                  value={warehouseId}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setWarehouseId(Number(next));
+                    setWarehouseIdState(next);
+                    void refresh();
+                  }}
+                >
+                  {warehouses.map((item) => (
+                    <option key={item.id} value={item.id}>
+                      {item.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              {warehouseNaming ? (
+                <form
+                  className="warehouse-create"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    const name = warehouseNameDraft.trim();
+                    if (!name) return;
+                    void (async () => {
+                      try {
+                        const created = await createWarehouse(name);
+                        setWarehouseId(created.id);
+                        setWarehouseIdState(String(created.id));
+                        setWarehouseNaming(false);
+                        setWarehouseNameDraft("");
+                        setMessage(`已切换到仓库 ${created.name}。这个仓库目前是空的。`);
+                        await refresh();
+                      } catch (err) {
+                        setError(errorText(err));
+                      }
+                    })();
+                  }}
+                >
+                  <input
+                    autoFocus
+                    value={warehouseNameDraft}
+                    placeholder="仓库名称"
+                    onChange={(e) => setWarehouseNameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") {
+                        setWarehouseNaming(false);
+                        setWarehouseNameDraft("");
+                      }
+                    }}
+                  />
+                  <button type="submit" className="btn">
+                    确定
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => setWarehouseNaming(true)}
+                >
+                  新建仓库
+                </button>
+              )}
+            </div>
+          )}
           <div className="tunnel-panel">
             {/* FEATURE: TUNNEL — 页头 Cloudflare 临时隧道开关；docs/CODE_INDEX.md#feature-tunnel */}
             <div className="tunnel-controls" aria-label="隧道开关">
@@ -2429,7 +2947,19 @@ export default function App() {
             </div>
           </div>
         </div>
-        {stats && (
+        <div className="workspace-heading">
+          <p className="workspace-kicker">工作空间</p>
+          <h2>
+            {NAV_SECTIONS.flatMap((section) => section.items).find(([key]) => key === tab)?.[1] || "库存"}
+          </h2>
+          <p>
+            {NAV_SECTIONS.find((section) => section.items.some(([key]) => key === tab))?.hint}
+          </p>
+        </div>
+        {stats &&
+        NAV_SECTIONS.find((section) =>
+          section.items.some(([key]) => key === tab),
+        )?.id === "flow" && (
           <div className="stats">
             {(
               [
@@ -2451,12 +2981,13 @@ export default function App() {
         )}
       </header>
 
-      {meta?.auth_required &&
+      {/* TEMP: 员工登录先关掉。恢复时改回 meta?.auth_required && */}
+      {false &&
+      meta?.auth_required &&
       !(
-        authUser &&
-        (authUser.role === "admin" ||
-          authUser.role === "warehouse" ||
-          authUser.role === "finance")
+        authUser?.role === "admin" ||
+        authUser?.role === "warehouse" ||
+        authUser?.role === "finance"
       ) &&
       !getAdminToken() ? (
         // FEATURE: AUTH — 员工主界面登录（AuthPanel）
@@ -2496,7 +3027,7 @@ export default function App() {
             退出
           </button>
         </div>
-      ) : meta?.auth_required ? (
+      ) : false && meta?.auth_required ? (
         <div className="admin-token-bar panel">
           <label>
             管理口令（兼容）
@@ -2522,55 +3053,72 @@ export default function App() {
         </div>
       ) : null}
 
-      <nav className="tabs">
-        {(
-          [
-            ["orders", "订单"],
-            ["finance", "财务"],
-            ["reports", "统计"],
-            ["requests", "申请单"],
-            ["scrape", "抓取导入"],
-            ["inbound", "进库"],
-            ["inventory", "库存"],
-            ["outbound", "出库"],
-            ["logs", "操作日志"],
-            ["users", "用户"],
-          ] as [Tab, string][]
-        )
-          .filter(([key]) => {
-            const role = authUser?.role;
-            if (key === "users") return role === "admin";
-            if (key === "finance" || key === "reports") {
-              return !role || role === "admin" || role === "finance" || role === "warehouse";
+      <nav className="app-nav" aria-label="功能分区">
+        <div className="staff-nav-brand">
+          <span className="staff-nav-mark" aria-hidden="true">S</span>
+          <span>
+            <strong>stockgood</strong>
+            <small>INVENTORY WORKSPACE</small>
+          </span>
+        </div>
+        {(() => {
+          const role = authUser?.role;
+          const sections = NAV_SECTIONS.map((section) => ({
+            ...section,
+            items: section.items.filter(([key]) => tabAllowed(key, role)),
+          })).filter((section) => section.items.length > 0);
+          const current =
+            sections.find((section) => section.items.some(([key]) => key === tab)) ||
+            sections[0];
+          const switchTab = (key: Tab) => {
+            const apply = () => setTab(key);
+            const doc = document as Document & {
+              startViewTransition?: (cb: () => void) => void;
+            };
+            if (typeof doc.startViewTransition === "function") {
+              doc.startViewTransition(apply);
+            } else {
+              apply();
             }
-            if (
-              role === "finance" &&
-              (key === "scrape" || key === "inbound" || key === "inventory" || key === "outbound")
-            ) {
-              return false;
-            }
-            return true;
-          })
-          .map(([key, label]) => (
-          <button
-            type="button"
-            key={key}
-            className={tab === key ? "active" : ""}
-            onClick={() => {
-              const switchTab = () => setTab(key);
-              const doc = document as Document & {
-                startViewTransition?: (cb: () => void) => void;
-              };
-              if (typeof doc.startViewTransition === "function") {
-                doc.startViewTransition(switchTab);
-              } else {
-                switchTab();
-              }
-            }}
-          >
-            {label}
-          </button>
-        ))}
+          };
+          if (!current) return null;
+          return (
+            <>
+              <div className="nav-sections">
+                {sections.map((section) => (
+                  <div className="staff-nav-group" key={section.id}>
+                    <button
+                      type="button"
+                      className={section.id === current.id ? "active" : ""}
+                      onClick={() => {
+                        if (section.items.some(([key]) => key === tab)) return;
+                        switchTab(section.items[0][0]);
+                      }}
+                    >
+                      {section.label}
+                    </button>
+                    <div className="nav-steps">
+                      {section.items.map(([key, label]) => (
+                        <span className="nav-step" key={key}>
+                          <button
+                            type="button"
+                            className={tab === key ? "active" : ""}
+                            aria-current={tab === key ? "page" : undefined}
+                            onClick={() => switchTab(key)}
+                          >
+                            <span className="staff-nav-icon" aria-hidden="true">{NAV_ICONS[key]}</span>
+                            {label}
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+              <p className="nav-hint">{current.hint}</p>
+            </>
+          );
+        })()}
       </nav>
 
       {latestLog?.undoable && (
@@ -2603,6 +3151,15 @@ export default function App() {
       {tab === "orders" && (
         <section className="panel">
           <form className="toolbar" onSubmit={onSearch}>
+            <button
+              type="button"
+              className="btn"
+              onClick={() => setOrderSearchOpen((open) => !open)}
+            >
+              {orderSearchOpen ? "收起筛选" : "筛选"}
+            </button>
+            {orderSearchOpen ? (
+              <>
             <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}>
               <option value="">全部状态</option>
               {Object.entries(STATUS_LABEL).map(([value, label]) => (
@@ -2640,6 +3197,8 @@ export default function App() {
               onChange={(e) => setQ(e.target.value)}
             />
             <button className="btn" type="submit">搜索</button>
+              </>
+            ) : null}
             <button
               className="btn btn-primary"
               type="button"
@@ -3308,23 +3867,27 @@ export default function App() {
       {/* ============================================================
           FEATURE: ORDER_IMPORT
           [功能] 粘贴 URL 抓取预览后批量导入货品
-          [前端 API] scrapeUrl / createItemsBatch
-          [后端] POST /api/scrape  POST /api/items/batch
+          [前端 API] scrapeUrl / createOrder
+          [后端] POST /api/scrape  POST /api/orders
           [代码索引] docs/CODE_INDEX.md#feature-order_import
           ============================================================ */}
       {tab === "scrape" && (
         <section className="panel">
           <p className="muted">
-            支持批量粘贴多个商品/系列/店铺链接（每行一个，也可用逗号分隔）。
-            zozo.jp：商品页或「注文内容の詳細」整页源代码可粘贴抓取（订单列表页请改开详情）。
-            &mall（mitsui-shopping-park）：不要用「查看网页源代码」；F12→Elements 复制 `ul.order-history-list` 的 outerHTML（点完もっと見る后），或 Network→shop-order-skus 的 JSON。按钮应变为「解析 HTML」。相同商品自动合并数量。
-            vvstore.jp：打开「ご注文履歴詳細」→查看网页源代码整页粘贴；含单价/数量/运费/注文番号，无 JAN。相同商品自动合并数量。订单导入后可再粘贴商品详情页链接（如 /products/detail/…），会按同一商品自动回填 JAN。
-            sofmap.com（アキバ☆ソフマップ）：商品页链接（product_detail.aspx?sku=…）可抓取品名/特价/JAN/图/发售日；「お取引の詳細」整页源代码可粘贴导入订单（含数量/运费/注文番号；图 URL 常含 JAN）。
-            cystore.com（CyStore）：打开「購入履歴詳細」→查看网页源代码整页粘贴；含单价/数量/运费/注文番号，订单页通常无 JAN。相同商品自动合并数量。
-            animate-onlineshop.jp（アニメイト通販）：打开マイページ「注文履歴」→查看网页源代码整页粘贴；行内金额为小计（入库单价=小计÷点数）；含运费/注文番号；特典行跳过；订单页通常无 JAN。相同商品自动合并数量。
-            eeo.today（eeo Store）：打开マイページ「ご注文履歴詳細」→查看网页源代码整页粘贴；含单价/数量/运费/注文番号；邮件正文有商品コード时可回填 JAN。相同商品自动合并数量。
-            结果会累加到同一清单；勾选后点「导入为一笔订单」。
+            链接每行一个，也可用逗号分隔。本页只导入 Stockgood 订单；加入对方网站购物车请用 Tab「模板加购」。结果累加到同一清单，勾选后点「导入为一笔订单」。
           </p>
+          <details className="scrape-guide">
+            <summary>各站支持方式</summary>
+            <ul>
+              {SCRAPE_SITE_GUIDE.map((site) => (
+                <li key={site.id}>
+                  <strong>{site.name}</strong>
+                  <span className="scrape-guide-tags">{site.supports.join(" / ")}</span>
+                  <span className="muted">{site.note}</span>
+                </li>
+              ))}
+            </ul>
+          </details>
           <div className="scrape-bar scrape-bar-batch">
             <label className="grow">
               URL 列表 / HTML 片段 / JSON
@@ -3443,6 +4006,241 @@ export default function App() {
       )}
 
       {/* ============================================================
+          FEATURE: RETAILER_CART
+          [功能] 导入模板预览后，可选加入对方网站购物车（不结算）；付款后填订单号+总价生成库存订单
+          [前端 API] parseRetailerCartTemplate / addRetailerCart / createOrder
+          [后端] POST /api/retailer-cart/parse  POST /api/retailer-cart/add  POST /api/orders
+          [代码索引] docs/CODE_INDEX.md#feature-retailer_cart
+          ============================================================ */}
+      {tab === "retailer-cart" && (
+        <section className="panel">
+          <p className="muted">
+            与「抓取导入」分开：本页按模板筛选白名单商品链接，再自行决定是否加入对方购物车。
+            不登录代付、不结算。按店铺分类，不能混进同一个购物车。
+            Shopify 链接：bushiroad-store.com（税抜×1.1），以及 lafary.shop、animeshi.jp、cocollabo.net、qinocop.com、mono-mo.com、cho-kaguyahime-officialstore.bookstores.jp（税込）。
+            FutureShop 链接：jumpcs.shueisha.co.jp、store.kadokawa.co.jp。
+            MakeShop 表单：miraithings.com、pricafe.shop、store-gk.com。
+            asobi store 表单：shop.asobistore.jp。
+            HMV 链接：hmv.co.jp（商品页末尾的编号，每次打开加 1 件）。Lawson / Loppi / HMV 限定不能和普通 HMV 商品放进同一个购物车。
+            点「按模板加入对方购物车」会按店打开对方购物车页，请在已能访问该站的浏览器里核对。
+          </p>
+          <div className="scrape-bar">
+            <label className="grow">
+              导入模板（csv / xlsx）
+              <input
+                type="file"
+                accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                disabled={retailerCartBusy}
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  e.target.value = "";
+                  void onParseRetailerCart(file);
+                }}
+              />
+            </label>
+            <div className="scrape-actions">
+              <button
+                type="button"
+                className="btn"
+                disabled={retailerCartBusy}
+                onClick={() => void downloadRetailerCartTemplate().catch((err) => setError(errorText(err)))}
+              >
+                下载空白模板
+              </button>
+              {retailerCartPreview ? (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={() => {
+                    setRetailerCartPreview(null);
+                    setRetailerCartPermalink("");
+                    setRetailerCartPermalinks({});
+                    setRetailerCartOrderDrafts({});
+                  }}
+                >
+                  清空预览
+                </button>
+              ) : null}
+            </div>
+          </div>
+          {retailerCartPreview ? (
+            <div className="collection-box">
+              <div className="toolbar">
+                <span className="muted">
+                  可加购 {retailerCartPreview.eligible.length} 种，跳过{" "}
+                  {retailerCartPreview.skipped.length} 行
+                </span>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={retailerCartBusy || retailerCartPreview.eligible.length === 0}
+                  onClick={() => void onAddRetailerCart()}
+                >
+                  {retailerCartBusy ? "处理中…" : "按模板加入对方购物车"}
+                </button>
+                {retailerCartPermalink ? (
+                  <CompactCopyLinkButton
+                    url={retailerCartPermalink}
+                    label="复制购物车链接"
+                  />
+                ) : null}
+              </div>
+              {retailerCartPreview.eligible.length ? (
+                groupRetailerCartLines(retailerCartPreview.eligible).map(
+                  ([shop, rows]) => {
+                    const meta = retailerShopMeta(shop, retailerCartPreview.shops);
+                    const draft = retailerCartOrderDrafts[shop] || {
+                      ref: "",
+                      total: "",
+                    };
+                    const cartUrl =
+                      retailerCartPermalinks[shop] ||
+                      (rows.length === retailerCartPreview.eligible.length
+                        ? retailerCartPermalink
+                        : "");
+                    return (
+                      <div key={shop}>
+                        <h2>
+                          {meta.label}
+                          <span className="muted">
+                            {" "}
+                            · {meta.kindLabel}
+                            {meta.kind === "shopify" ? ` · ${meta.taxHint}` : ""} · {shop} · {rows.length}种
+                          </span>
+                        </h2>
+                        <div className="collection-list">
+                          {rows.map((row, index) => (
+                            <div
+                              className="collection-row"
+                              key={`ok-${shop}-${index}-${row.product_id}`}
+                            >
+                              <div className="collection-main">
+                                {row.image_url ? (
+                                  <img
+                                    className="thumb"
+                                    src={row.image_url}
+                                    alt=""
+                                    referrerPolicy="no-referrer"
+                                  />
+                                ) : (
+                                  <span className="thumb placeholder" />
+                                )}
+                                <span>
+                                  <strong>{row.name || row.product_id}</strong>
+                                  <span className="muted">
+                                    {row.unit_cost != null
+                                      ? ` · ¥${row.unit_cost}`
+                                      : " · 无标价"}
+                                  </span>
+                                </span>
+                              </div>
+                              <span className="collection-qty">×{row.qty}</span>
+                              <CompactCopyLinkButton url={row.source_url} />
+                            </div>
+                          ))}
+                        </div>
+                        <div className="toolbar">
+                          <button
+                            type="button"
+                            className="btn"
+                            disabled={retailerCartBusy}
+                            onClick={() => void onAddRetailerCart(shop)}
+                          >
+                            {retailerCartBusy ? "处理中…" : "加入该店购物车"}
+                          </button>
+                          {cartUrl ? (
+                            <CompactCopyLinkButton
+                              url={cartUrl}
+                              label="复制该店购物车链接"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="form-grid">
+                          <label>
+                            订单号
+                            <input
+                              value={draft.ref}
+                              disabled={retailerCartBusy}
+                              onChange={(e) =>
+                                setRetailerCartOrderDrafts((current) => ({
+                                  ...current,
+                                  [shop]: { ...draft, ref: e.target.value },
+                                }))
+                              }
+                              placeholder={`${meta.label} 订单号`}
+                            />
+                          </label>
+                          <label>
+                            总价
+                            <input
+                              type="number"
+                              min={0}
+                              step="1"
+                              value={draft.total}
+                              disabled={retailerCartBusy}
+                              onChange={(e) =>
+                                setRetailerCartOrderDrafts((current) => ({
+                                  ...current,
+                                  [shop]: { ...draft, total: e.target.value },
+                                }))
+                              }
+                              placeholder="JPY"
+                            />
+                          </label>
+                        </div>
+                        <div className="toolbar">
+                          <span className="muted">
+                            在该店付款后填订单号和总价，再生成该店库存订单。不会从对方网站回传。
+                          </span>
+                          <button
+                            type="button"
+                            className="btn btn-primary"
+                            disabled={retailerCartBusy}
+                            onClick={() => void onCreateRetailerCartOrder(shop)}
+                          >
+                            {retailerCartBusy ? "处理中…" : "生成该店库存订单"}
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  },
+                )
+              ) : (
+                <div className="empty">没有可加购的白名单行</div>
+              )}
+              {retailerCartPreview.skipped.length ? (
+                <>
+                  <h2>已跳过</h2>
+                  <div className="collection-list">
+                    {retailerCartPreview.skipped.map((row, index) => (
+                      <div
+                        className="collection-row"
+                        key={`skip-${index}-${row.product_id || row.skip_reason}`}
+                      >
+                        <div className="collection-main">
+                          <span>
+                            <strong>
+                              {CART_SKIP_LABEL[row.skip_reason] || row.skip_reason}
+                            </strong>
+                            <span className="muted"> · ×{row.qty}</span>
+                          </span>
+                        </div>
+                        {row.source_url ? (
+                          <CompactCopyLinkButton url={row.source_url} />
+                        ) : (
+                          <span className="muted">（无链接）</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+      )}
+
+      {/* ============================================================
           FEATURE: INBOUND
           [功能] 按订单进库、确认到仓
           [前端 API] createOrderInbound / fetchShipments / confirmShipment
@@ -3455,6 +4253,24 @@ export default function App() {
             勾选待进库行后点「确认进库」，直接变为在库。快递单号可选；多笔订单同时进库时请留空单号。
           </p>
           <h2>待进库</h2>
+          {inboundLines.length > 0 && (
+            <div className="toolbar order-select-bar">
+              <label className="check-inline">
+                <input
+                  type="checkbox"
+                  checked={inboundLines.every((line) =>
+                    selectedInboundIds.includes(line.id),
+                  )}
+                  onChange={(e) =>
+                    setSelectedInboundIds(
+                      e.target.checked ? inboundLines.map((line) => line.id) : [],
+                    )
+                  }
+                />
+                全部勾选
+              </label>
+            </div>
+          )}
           <div className="item-pick">
             {inboundLines.length === 0 ? (
               <div className="empty">没有可进库的订单行</div>
@@ -4007,9 +4823,9 @@ export default function App() {
 
       {/* ============================================================
           FEATURE: OUTBOUND_BATCH
-          [功能] 批次出库：分箱、共用运单、包装、创建/编辑/签收
+          [功能] 批次出库：分箱、每箱独立运单、包装、创建/编辑/签收
           同页按钮：
-            「导出 INV」→ FEATURE: INV_EXPORT
+            「导出 INV」→ FEATURE: INV_EXPORT；「导出 SF」→ FEATURE: SF_EXPORT
             「费用明细 Excel」→ FEATURE: FEE_DETAIL
           [前端 API] createOutboundBatch / updateOutboundBatch / confirmOutboundBatch
           [后端] /api/outbound-batches*
@@ -4352,6 +5168,9 @@ export default function App() {
                       {box.tracking_no.trim()
                         ? ` · ${box.tracking_no.trim()}`
                         : " · 未填单号"}
+                      {box.freight_jpy.trim()
+                        ? ` · 运费JPY ${box.freight_jpy.trim()}`
+                        : ""}
                       {" · "}
                       {orderGroups.length} 单 · {lines.length} 行
                       {box.note.trim()
@@ -4411,6 +5230,20 @@ export default function App() {
                             onChange={(e) =>
                               updateDraftBox(index, {
                                 tracking_no: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          运费 (JPY)
+                          <input
+                            type="number"
+                            min={0}
+                            step="1"
+                            value={box.freight_jpy}
+                            onChange={(e) =>
+                              updateDraftBox(index, {
+                                freight_jpy: e.target.value,
                               })
                             }
                           />
@@ -4657,6 +5490,13 @@ export default function App() {
             </button>
             <button
               type="button"
+              className="btn"
+              onClick={() => void onExportDraftSf()}
+            >
+              导出 SF
+            </button>
+            <button
+              type="button"
               className="btn btn-primary"
               onClick={() => void onCreateOutbound()}
             >
@@ -4664,7 +5504,7 @@ export default function App() {
             </button>
           </div>
           <p className="muted">
-            建议先核对分箱、包装尺寸与运单后导出 INV，再创建出库批次；已创建批次也可随时导出 INV。
+            建议先核对分箱、包装尺寸与运单后导出 INV / SF，再创建出库批次；已创建批次也可随时导出。
           </p>
 
           <h2>已有出库批次</h2>
@@ -4715,6 +5555,17 @@ export default function App() {
                     }}
                   >
                     导出 INV
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() =>
+                      void downloadOutboundSf(batch.id).catch((err) =>
+                        setError(errorText(err)),
+                      )
+                    }
+                  >
+                    导出 SF
                   </button>
                   <button
                     type="button"
@@ -4801,6 +5652,20 @@ export default function App() {
                             onChange={(e) =>
                               updateBatchEditBox(boxIndex, {
                                 tracking_no: e.target.value,
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          运费 (JPY)
+                          <input
+                            type="number"
+                            min={0}
+                            step="1"
+                            value={box.freight_jpy}
+                            onChange={(e) =>
+                              updateBatchEditBox(boxIndex, {
+                                freight_jpy: e.target.value,
                               })
                             }
                           />
@@ -5013,7 +5878,10 @@ export default function App() {
               </div>
               {batch.boxes.map((box) => (
                 <div className="box-card" key={box.id}>
-                  <strong>箱 {box.box_no}</strong> · {CARRIER_LABEL[box.carrier]} · <span className="mono">{box.tracking_no}</span> · <span className={`badge ${box.status === "delivered" ? "delivered" : "outbound_shipped"}`}>{box.status === "delivered" ? "已签收" : "运输中"}</span>
+                  <strong>箱 {box.box_no}</strong> · {CARRIER_LABEL[box.carrier]} · <span className="mono">{box.tracking_no}</span>
+                  {box.freight_jpy != null ? ` · 运费JPY ${moneyText(box.freight_jpy)}` : ""}
+                  {" · "}
+                  <span className={`badge ${box.status === "delivered" ? "delivered" : "outbound_shipped"}`}>{box.status === "delivered" ? "已签收" : "运输中"}</span>
                   {box.note ? (
                     <div className="muted box-note-display">{box.note}</div>
                   ) : null}
@@ -5276,8 +6144,25 @@ function OrderCard({
         <label className="order-check">
           <input type="checkbox" checked={selected} onChange={onToggleSelect} />
         </label>
-        {editing ? (
-          <label className="order-ref-inline order-cell-ref">
+        <div className="order-cell-ref order-ref-with-thumb">
+          {(() => {
+            const preview =
+              order.lines.find((line) => (line.image_url || "").trim())?.image_url ||
+              order.order_image_url ||
+              "";
+            return preview ? (
+              <img
+                className="order-preview"
+                src={preview}
+                alt=""
+                referrerPolicy="no-referrer"
+              />
+            ) : (
+              <span className="order-preview placeholder" />
+            );
+          })()}
+          {editing ? (
+          <label className="order-ref-inline">
             <input
               className="mono"
               value={refDraft}
@@ -5296,12 +6181,13 @@ function OrderCard({
         ) : (
           <button
             type="button"
-            className="order-ref-btn mono order-cell-ref"
+            className="order-ref-btn mono"
             onClick={onToggleExpand}
           >
             {order.order_ref || `#${order.id}`}
           </button>
         )}
+        </div>
         <span className={`badge ${order.status} order-cell-status`}>
           {STATUS_LABEL[order.status]}
         </span>

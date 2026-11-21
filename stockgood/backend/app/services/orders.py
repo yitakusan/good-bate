@@ -13,6 +13,12 @@ from app.services import action_log
 from app.services.order_status import sync_order_status
 from app.settings import get_settings
 from app.tracking_links import tracking_url
+from app.warehouse_scope import (
+    ensure_visible,
+    shipment_scope_sql,
+    stamp_warehouse_id,
+    warehouse_and,
+)
 
 # ============================================================
 # FEATURE: ORDER
@@ -111,8 +117,7 @@ def _attach_line_shipments(conn, item: dict[str, Any]) -> dict[str, Any]:
 
 def _order_out(conn, order_id: int) -> dict[str, Any]:
     order = conn.execute("SELECT * FROM orders WHERE id = ?", (order_id,)).fetchone()
-    if not order:
-        raise HTTPException(status_code=404, detail="order not found")
+    ensure_visible(order, "order not found")
     lines = conn.execute(
         "SELECT * FROM items WHERE order_id = ? ORDER BY id",
         (order_id,),
@@ -202,6 +207,10 @@ def list_orders(
             "SELECT 1 FROM items i WHERE i.order_id = o.id AND i.expected_ship_at = ?))"
         )
         params.extend([month, month])
+    wh_sql, wh_params = warehouse_and("o.warehouse_id")
+    if wh_sql:
+        clauses.append(wh_sql.removeprefix(" AND "))
+        params.extend(wh_params)
 
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with get_conn() as conn:
@@ -243,8 +252,8 @@ def create_order(payload: OrderCreate) -> dict[str, Any]:
             INSERT INTO orders (
                 order_ref, shop, status, ordered_at, order_qty, shipping_fee,
                 exchange_rate, order_image_url, note, expected_ship_at,
-                expected_ship_period
-            ) VALUES (?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?, ?)
+                expected_ship_period, warehouse_id
+            ) VALUES (?, ?, 'ordered', ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 payload.order_ref.strip(),
@@ -257,6 +266,7 @@ def create_order(payload: OrderCreate) -> dict[str, Any]:
                 payload.note.strip(),
                 expected_ship_at,
                 expected_ship_period,
+                stamp_warehouse_id(conn),
             ),
         )
         order_id = int(cur.lastrowid)
@@ -454,31 +464,42 @@ def update_order(order_id: int, payload: OrderUpdate) -> dict[str, Any]:
 
 def get_stats() -> dict[str, int]:
     with get_conn() as conn:
+        order_sql, order_params = warehouse_and("warehouse_id")
+        ship_sql, ship_params = shipment_scope_sql()
+        order_where = f"WHERE 1=1{order_sql}"
+        ship_where = f"WHERE 1=1{(' AND ' + ship_sql) if ship_sql else ''}"
         order_counts = {
             r["status"]: r["cnt"]
             for r in conn.execute(
-                "SELECT status, COUNT(*) AS cnt FROM orders GROUP BY status"
+                f"SELECT status, COUNT(*) AS cnt FROM orders {order_where} GROUP BY status",
+                order_params,
             ).fetchall()
         }
         ship_counts = {
             r["status"]: r["cnt"]
             for r in conn.execute(
-                "SELECT status, COUNT(*) AS cnt FROM shipments GROUP BY status"
+                f"SELECT status, COUNT(*) AS cnt FROM shipments {ship_where} GROUP BY status",
+                ship_params,
             ).fetchall()
         }
         inbound_shipments_shipped = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM shipments
-            WHERE status = 'shipped' AND direction = 'inbound'
-            """
+            {ship_where} AND status = 'shipped' AND direction = 'inbound'
+            """,
+            ship_params,
         ).fetchone()[0]
         outbound_shipments_shipped = conn.execute(
-            """
+            f"""
             SELECT COUNT(*) FROM shipments
-            WHERE status = 'shipped' AND direction = 'outbound'
-            """
+            {ship_where} AND status = 'shipped' AND direction = 'outbound'
+            """,
+            ship_params,
         ).fetchone()[0]
-        orders_total = conn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+        orders_total = conn.execute(
+            f"SELECT COUNT(*) FROM orders {order_where}",
+            order_params,
+        ).fetchone()[0]
     return {
         "ordered": order_counts.get("ordered", 0),
         "inbound_shipped": order_counts.get("inbound_shipped", 0),
@@ -499,7 +520,11 @@ def list_shops() -> list[str]:
             """
             SELECT DISTINCT shop FROM orders
             WHERE shop != ''
-            ORDER BY shop COLLATE NOCASE
             """
+            + warehouse_and("warehouse_id")[0]
+            + """
+            ORDER BY shop COLLATE NOCASE
+            """,
+            warehouse_and("warehouse_id")[1],
         ).fetchall()
         return [r["shop"] for r in rows]

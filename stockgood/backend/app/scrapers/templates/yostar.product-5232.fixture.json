@@ -1,0 +1,113 @@
+{
+  "code": 200,
+  "msg": "OK",
+  "data": {
+    "id": 5232,
+    "name": "アクリルスタンド エリカ",
+    "product_sn": "",
+    "publish_start_at": 1779937200,
+    "publish_end_at": 1782140340,
+    "head_image": "https://shopimages.yostar.co.jp/0518144651_6a0aa7cb8c290.jpg",
+    "price": 0,
+    "age_limit": 0,
+    "description": "",
+    "detail": {
+      "product_id": 5232,
+      "ip_designer": "平野 泰考",
+      "ip_maker": "平野 泰考",
+      "copyrightRyRatesId": 0,
+      "imageList": [
+        "https://shopimages.yostar.co.jp/0518144651_6a0aa7cb8c290.jpg"
+      ],
+      "content": "<strong><font color=\"#FF0000\">※お届け予定日：2026年8月頃より順次発送開始（予定）</font></strong>\n<strong><font color=\"#FF0000\">※1度にご注文いただいたすべての商品が揃い次第発送するため、ご注文商品のうち[お届け予定日]が最も遅い商品を目安にお届けいたします。</font></strong>\n※ご購入はおひとり様5個までとさせていただきます。\n※上記販売期間は受注販売（注文受付後に生産する）となります。受注販売の期間終了後、通常販売を行う場合がございます。\n<strong>※販売期間が【2026/5/28(木) 12:00 ～ 2026/6/22(月) 23:59】に設定されている商品のみを組み合わせてご注文いただけます。</strong>\n\n【サイズ】\n本体：縦約192mm × 横約88mm\n台座：縦約24mm × 横約55mm\n\n【素材】\nアクリル\n\n&copy; 2026 NEXON Games & Yostar\n※商品画像はイメージです。実際の商品とは異なる場合がございます。",
+      "hint": ""
+    },
+    "sku": [
+      {
+        "sku_id": 6172,
+        "product_id": 5232,
+        "attr": [
+          {
+            "key": "-",
+            "value": ""
+          }
+        ],
+        "stock": 0,
+        "price": 1980,
+        "is_tax_reduce": 0,
+        "stock_unlimited": 1,
+        "sku_img": ""
+      }
+    ],
+    "buy_type": 1,
+    "category_list": [
+      {
+        "id": 5,
+        "name": "イベントから探す",
+        "level": 1,
+        "parent_id": 0,
+        "sort": 125,
+        "children": [
+          {
+            "id": 82,
+            "name": "ブルーアーカイブ アクリルスタンド",
+            "level": 2,
+            "parent_id": 5,
+            "sort": 75,
+            "children": null
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "name": "カテゴリから探す",
+        "level": 1,
+        "parent_id": 0,
+        "sort": 128,
+        "children": [
+          {
+            "id": 23,
+            "name": "缶バッジ・アクリル製品",
+            "level": 2,
+            "parent_id": 1,
+            "sort": 25,
+            "children": null
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "タイトルから探す",
+        "level": 1,
+        "parent_id": 0,
+        "sort": 130,
+        "children": [
+          {
+            "id": 21,
+            "name": "ブルーアーカイブ",
+            "level": 2,
+            "parent_id": 2,
+            "sort": 105,
+            "children": null
+          }
+        ]
+      }
+    ],
+    "is_collect": 0,
+    "is_buy": 0,
+    "is_display_pub_time": 1,
+    "lottery_at": 0,
+    "is_preview": 1,
+    "buy_start_at": 1779937200,
+    "buy_end_at": 1782140340,
+    "category_ids": [
+      1,
+      2,
+      5,
+      21,
+      23,
+      82
+    ],
+    "have_spec": 0
+  }
+}

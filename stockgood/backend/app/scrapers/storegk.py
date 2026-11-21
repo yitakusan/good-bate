@@ -17,6 +17,28 @@ from app.release_date import map_release_to_expected_ship
 SHOP = "store-gk.com"
 BASE = "https://www.store-gk.com/"
 
+# CDN shop id or host text -> public shop. Order pages often omit the domain.
+_MAKESHOP_SHOPS: tuple[dict[str, str], ...] = (
+    {
+        "shop": "shop.twincre.com",
+        "base": "https://shop.twincre.com/",
+        "label": "ツインクル",
+        "markers": "twincre",
+    },
+    {
+        "shop": "the-chara.com",
+        "base": "https://www.the-chara.com/",
+        "label": "THEキャラ",
+        "markers": "thechara55,the-chara.com",
+    },
+    {
+        "shop": "store-gk.com",
+        "base": "https://www.store-gk.com/",
+        "label": "store-gk",
+        "markers": "store-gk.com,gokurakuyu,gk store",
+    },
+)
+
 
 def load_html_bytes(raw: bytes) -> str:
     """Decode browser-saved MakeShop HTML.
@@ -61,6 +83,14 @@ def _brand_id_from_href(href: str) -> str:
 
 
 def _guess_ship_from_name(name: str, ordered_year: Optional[int]) -> tuple[Optional[str], Optional[str]]:
+    # e.g. 「2026年10月発送」「2026年10月中旬…発送」
+    dated = re.search(
+        r"(\d{4})年\s*(\d{1,2})月\s*(上旬|中旬|下旬)?.{0,16}発送",
+        name or "",
+    )
+    if dated:
+        period = {"上旬": "early", "中旬": "mid", "下旬": "late"}.get(dated.group(3) or "")
+        return f"{int(dated.group(1)):04d}-{int(dated.group(2)):02d}", period
     # e.g. 「7月中旬頃以降発送」
     m = re.search(r"(\d{1,2})月\s*(上旬|中旬|下旬)", name)
     if not m:
@@ -76,7 +106,18 @@ def _ordered_year(text: str) -> Optional[int]:
     return int(m.group(1)) if m else None
 
 
-def _line_from_row(row: Tag) -> Optional[dict[str, Any]]:
+def detect_makeshop_order_shop(html: str) -> Optional[dict[str, str]]:
+    text = html or ""
+    if "orderBlock" not in text or "注文番号" not in text or "orderList" not in text:
+        return None
+    lower = text.lower()
+    for shop in _MAKESHOP_SHOPS:
+        if any(marker in lower for marker in shop["markers"].split(",")):
+            return shop
+    return None
+
+
+def _line_from_row(row: Tag, base: str = BASE) -> Optional[dict[str, Any]]:
     item = row.select_one("dl.orderItem")
     if not item:
         return None
@@ -95,7 +136,7 @@ def _line_from_row(row: Tag) -> Optional[dict[str, Any]]:
         bid = _brand_id_from_href(href)
         if bid:
             brand_id = bid
-            source_url = urljoin(BASE, f"shopdetail/{bid}/")
+            source_url = urljoin(base, f"shopdetail/{bid}/")
         if not text:
             continue
         if text in ("再購入", "再購入不可", "詳細") or text.startswith("再購入"):
@@ -113,28 +154,32 @@ def _line_from_row(row: Tag) -> Optional[dict[str, Any]]:
     if not name:
         return None
 
-    unit_excl = _parse_int_amount(cells[2].get_text(" ", strip=True))
+    unit_raw = _parse_int_amount(cells[2].get_text(" ", strip=True))
     qty_raw = _parse_int_amount(cells[3].get_text(" ", strip=True))
     qty = max(1, int(qty_raw or 1))
-    subtotal_excl = _parse_int_amount(cells[5].get_text(" ", strip=True))
+    sub_text = cells[5].get_text(" ", strip=True)
+    subtotal_raw = _parse_int_amount(sub_text)
+    # store-gk / THEキャラ の単価は税抜。ツインクルは小計に（税込）と書いてある。
+    tax_included = "税込" in sub_text
 
-    # MakeShop 履歴の単価/小計は税抜、消費税行が別立て → 入库单价用税込
     unit_cost: Optional[float] = None
-    if unit_excl is not None:
-        unit_cost = round(unit_excl * 1.1, 2)
-    elif subtotal_excl is not None:
-        unit_cost = round(subtotal_excl * 1.1 / qty, 2)
+    if unit_raw is not None:
+        unit_cost = float(unit_raw) if tax_included else round(unit_raw * 1.1, 2)
+    elif subtotal_raw is not None:
+        unit_cost = (
+            round(subtotal_raw / qty, 2)
+            if tax_included
+            else round(subtotal_raw * 1.1 / qty, 2)
+        )
 
     image_url = ""
-    img = item.select_one("img.productNoImage, img[src]")
-    if img and img.get("src"):
-        src = str(img["src"])
-        if src.startswith("http"):
+    for img in item.select("img[src]"):
+        src = str(img.get("src") or "").strip()
+        if not src or "none_image" in src:
+            continue
+        if src.startswith("http://") or src.startswith("https://"):
             image_url = src
-        elif brand_id:
-            # 本地另存图片不可用时保留商品页；图另论
-            image_url = ""
-
+            break
     return {
         "name": name,
         "qty": qty,
@@ -142,8 +187,13 @@ def _line_from_row(row: Tag) -> Optional[dict[str, Any]]:
         "image_url": image_url,
         "source_url": source_url,
         "brand_id": brand_id,
-        "unit_cost_excl": unit_excl,
+        "tax_included": tax_included,
     }
+
+
+def is_storegk_order_history_html(html: str) -> bool:
+    """MakeShop 注文履歴 for known shops (store-gk, THEキャラ)."""
+    return detect_makeshop_order_shop(html) is not None
 
 
 def parse_order_history_html(
@@ -151,6 +201,12 @@ def parse_order_history_html(
     *,
     order_ref: Optional[str] = None,
 ) -> list[dict[str, Any]]:
+    shop_info = detect_makeshop_order_shop(html)
+    if shop_info is None:
+        return []
+    shop = shop_info["shop"]
+    base = shop_info["base"]
+    label = shop_info["label"]
     soup = BeautifulSoup(html, "html.parser")
     results: list[dict[str, Any]] = []
 
@@ -178,20 +234,20 @@ def parse_order_history_html(
             classes = row.get("class") or []
             if "orderCharge" in classes or "orderTotal" in classes:
                 continue
-            line = _line_from_row(row)
+            line = _line_from_row(row, base)
             if line:
                 lines.append(line)
 
         shipping_fee = None
         order_total = None
         for row in block.select("tr.orderCharge, tr.orderTotal"):
-            label = row.get_text(" ", strip=True)
-            amount = _parse_int_amount(label)
+            row_label = row.get_text(" ", strip=True)
+            amount = _parse_int_amount(row_label)
             if amount is None:
                 continue
-            if "送料" in label:
+            if "送料" in row_label:
                 shipping_fee = amount
-            if "合計" in label:
+            if "合計" in row_label:
                 order_total = amount
 
         ship_at = None
@@ -205,13 +261,17 @@ def parse_order_history_html(
         results.append(
             {
                 "order_ref": ref,
-                "shop": SHOP,
+                "shop": shop,
+                "shop_label": label,
                 "status_text": status_text,
                 "ordered_at": ordered_at,
                 "shipping_fee": shipping_fee,
                 "order_total": order_total,
                 "expected_ship_at": ship_at,
                 "expected_ship_period": ship_period,
+                "unit_tax_included": bool(lines) and all(
+                    line.get("tax_included") for line in lines
+                ),
                 "lines": [
                     {
                         "name": line["name"],

@@ -109,6 +109,32 @@ export function setAdminToken(token: string) {
   }
 }
 
+const WAREHOUSE_KEY = "stockgood.warehouseId";
+
+export function getWarehouseId(): string {
+  try {
+    return localStorage.getItem(WAREHOUSE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+export function setWarehouseId(id: number | null) {
+  try {
+    if (id == null) localStorage.removeItem(WAREHOUSE_KEY);
+    else localStorage.setItem(WAREHOUSE_KEY, String(id));
+  } catch {
+    /* ignore */
+  }
+}
+
+function applyStaffHeaders(headers: Record<string, string>) {
+  const adminToken = getAdminToken();
+  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  const warehouseId = getWarehouseId();
+  if (warehouseId) headers["X-Warehouse-Id"] = warehouseId;
+}
+
 export interface TunnelStatus {
   running: boolean;
   url: string;
@@ -118,12 +144,11 @@ export interface TunnelStatus {
 export type ActionLog = ActionLogOut;
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const adminToken = getAdminToken();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(init?.headers as Record<string, string> | undefined),
   };
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   const res = await fetch(path, {
     ...init,
     headers,
@@ -178,6 +203,23 @@ export function stopTunnel() {
 // ============================================================
 export function fetchMeta() {
   return request<AppMeta>("/api/meta");
+}
+
+export type Warehouse = {
+  id: number;
+  name: string;
+  created_at: string;
+};
+
+export function fetchWarehouses() {
+  return request<Warehouse[]>("/api/warehouses");
+}
+
+export function createWarehouse(name: string) {
+  return request<Warehouse>("/api/warehouses", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
 }
 
 // ============================================================
@@ -410,6 +452,112 @@ export function scrapeUrl(url: string, html?: string) {
   });
 }
 
+// ============================================================
+// FEATURE: RETAILER_CART
+// [API函数] parseRetailerCartTemplate / addRetailerCart / downloadRetailerCartTemplate
+// [调用页面] App.tsx Tab 模板加购
+// [后端接口] POST /api/retailer-cart/parse  POST /api/retailer-cart/add
+// [代码索引] docs/CODE_INDEX.md#feature-retailer_cart
+// ============================================================
+export type RetailerCartLine = {
+  source_url: string;
+  qty: number;
+  product_id: string;
+  shop: string;
+  skip_reason: string;
+  variant_id?: string;
+  name?: string;
+  image_url?: string;
+  unit_cost?: number | null;
+};
+
+export type RetailerCartShop = {
+  host: string;
+  label: string;
+  kind: string;
+  tax: string;
+};
+
+export type RetailerCartParseResult = {
+  eligible: RetailerCartLine[];
+  skipped: RetailerCartLine[];
+  allowed_hosts: string[];
+  shops?: RetailerCartShop[];
+  message: string;
+};
+
+export type RetailerCartPost = {
+  action: string;
+  fields: Record<string, string>;
+};
+
+export type RetailerCartShopCart = {
+  shop: string;
+  label: string;
+  kind?: string;
+  cart_url: string;
+  cart_urls?: string[];
+  method?: string;
+  posts?: RetailerCartPost[];
+  items: RetailerCartLine[];
+};
+
+export type RetailerCartAddResult = {
+  cart_url: string;
+  carts?: RetailerCartShopCart[];
+  message: string;
+  items: RetailerCartLine[];
+};
+
+export function parseRetailerCartTemplate(file: File) {
+  const fd = new FormData();
+  fd.append("file", file);
+  const headers: Record<string, string> = {};
+  applyStaffHeaders(headers);
+  return fetch("/api/retailer-cart/parse", {
+    method: "POST",
+    headers,
+    body: fd,
+    credentials: "include",
+  }).then(async (res) => {
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(detailFromErrorBody(text, res.statusText));
+    }
+    return JSON.parse(text) as RetailerCartParseResult;
+  });
+}
+
+export function addRetailerCart(items: RetailerCartLine[]) {
+  return request<RetailerCartAddResult>("/api/retailer-cart/add", {
+    method: "POST",
+    body: JSON.stringify({ items }),
+  });
+}
+
+export function downloadRetailerCartTemplate() {
+  const headers: Record<string, string> = {};
+  applyStaffHeaders(headers);
+  return fetch("/api/retailer-cart/template.csv", {
+    headers,
+    credentials: "include",
+  }).then(async (res) => {
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(detailFromErrorBody(text, res.statusText));
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "retailer-cart-template.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+}
+
 // FEATURE: ORDER_REQUEST — 公开抓取（顾客申请页）
 export function publicScrapeUrl(url: string, html?: string) {
   return request<ScrapeResult>("/api/public/scrape", {
@@ -586,6 +734,7 @@ export function createOutboundBatch(payload: {
     tracking_no: string;
     note?: string;
     item_ids: number[];
+    freight_jpy?: number | null;
     net_weight?: number | null;
     gross_weight?: number | null;
     length_cm?: number | null;
@@ -615,6 +764,7 @@ export function updateOutboundBatch(
       tracking_no: string;
       note?: string;
       items: { item_id: number; qty?: number }[];
+      freight_jpy?: number | null;
       net_weight?: number | null;
       gross_weight?: number | null;
       length_cm?: number | null;
@@ -671,8 +821,7 @@ export function updateOutboundBatchFinance(
 // ============================================================
 export function downloadOutboundFeeDetail(id: number) {
   const headers: Record<string, string> = {};
-  const adminToken = getAdminToken();
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   return fetch(`/api/outbound-batches/${id}/fee-detail.xlsx`, {
     headers,
     credentials: "include",
@@ -746,8 +895,7 @@ async function downloadXlsxBlob(
   const headers: Record<string, string> = {
     ...(init?.headers as Record<string, string> | undefined),
   };
-  const adminToken = getAdminToken();
-  if (adminToken) headers["X-Admin-Token"] = adminToken;
+  applyStaffHeaders(headers);
   const res = await fetch(path, {
     ...init,
     headers,
@@ -793,6 +941,7 @@ export function downloadOutboundInvPreview(payload: {
     tracking_no: string;
     note?: string;
     item_ids: number[];
+    freight_jpy?: number | null;
     net_weight?: number | null;
     gross_weight?: number | null;
     length_cm?: number | null;
@@ -807,6 +956,51 @@ export function downloadOutboundInvPreview(payload: {
   return downloadXlsxBlob(
     "/api/outbound-batches/preview-inv.xlsx",
     "INV-draft-preview.xlsx",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+// ============================================================
+// FEATURE: SF_EXPORT
+// [API函数] downloadOutboundSf / downloadOutboundSfPreview
+// [调用页面] App.tsx 出库 Tab 按钮「导出 SF」
+// [后端接口] GET .../sf.xlsx  POST .../preview-sf.xlsx
+// [代码索引] docs/CODE_INDEX.md#feature-sf_export
+// ============================================================
+export function downloadOutboundSf(id: number) {
+  return downloadXlsxBlob(
+    `/api/outbound-batches/${id}/sf.xlsx`,
+    `SF-batch-${id}.xlsx`,
+  );
+}
+
+export function downloadOutboundSfPreview(payload: {
+  note?: string;
+  boxes: {
+    box_no?: number;
+    carrier: Carrier;
+    tracking_no: string;
+    note?: string;
+    item_ids: number[];
+    freight_jpy?: number | null;
+    net_weight?: number | null;
+    gross_weight?: number | null;
+    length_cm?: number | null;
+    width_cm?: number | null;
+    height_cm?: number | null;
+  }[];
+  freight_exchange_rate?: number | null;
+  freight_unit_price_jpy?: number | null;
+  chargeable_weight?: number | null;
+  invoice_ship_date?: string | null;
+}) {
+  return downloadXlsxBlob(
+    "/api/outbound-batches/preview-sf.xlsx",
+    "SF-draft-preview.xlsx",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },

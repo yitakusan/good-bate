@@ -2,7 +2,7 @@
 // FEATURE: ORDER_REQUEST
 //
 // [功能] 顾客订单申请页（路由 /apply）
-// [用途] 登录后抓取商品、勾选提交；待付定金后确认付款
+// [用途] 登录后按步骤选商品、确认清单、提交；待付定金在「进度」确认
 //
 // [页面]
 // frontend/src/ApplyPage.tsx
@@ -84,6 +84,10 @@ export default function ApplyPage() {
   const [depositBusy, setDepositBusy] = useState("");
   const [accountMenuOpen, setAccountMenuOpen] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement | null>(null);
+  const [applyView, setApplyView] = useState<"order" | "progress">("order");
+  const [applyStep, setApplyStep] = useState<"pick" | "review" | "submit">(
+    "pick",
+  );
 
   const [requests, setRequests] = useState<OrderRequestPublic[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
@@ -169,21 +173,33 @@ export default function ApplyPage() {
     setPendingMine([]);
   }
 
+  function unitAt(index: number): number | null {
+    const product = collection[index];
+    if (!product) return null;
+    const priceText = (collectionPrice[index] || "").trim();
+    const unit =
+      priceText === ""
+        ? product.unit_cost
+        : Number.isFinite(Number(priceText))
+          ? Number(priceText)
+          : product.unit_cost;
+    if (unit == null || !Number.isFinite(unit)) return null;
+    return unit;
+  }
+
+  function qtyAt(index: number) {
+    return Math.max(1, Number(collectionQty[index]) || 1);
+  }
+
   const selectedDepositTotal = (() => {
     let goods = 0;
     let missing = 0;
     for (const index of collectionPick) {
       const product = collection[index];
       if (!product) continue;
-      const priceText = (collectionPrice[index] || "").trim();
-      const unit =
-        priceText === ""
-          ? product.unit_cost
-          : Number.isFinite(Number(priceText))
-            ? Number(priceText)
-            : product.unit_cost;
-      const qty = Math.max(1, Number(collectionQty[index]) || 1);
-      if (unit == null || !Number.isFinite(unit)) {
+      const unit = unitAt(index);
+      const qty = qtyAt(index);
+      if (unit == null) {
         missing += 1;
         continue;
       }
@@ -356,13 +372,7 @@ export default function ApplyPage() {
       for (const index of collectionPick) {
         const product = collection[index];
         if (!product) continue;
-        const priceText = (collectionPrice[index] || "").trim();
-        const unitCost =
-          priceText === ""
-            ? product.unit_cost
-            : Number.isFinite(Number(priceText))
-              ? Number(priceText)
-              : product.unit_cost;
+        const unitCost = unitAt(index);
         try {
           await createOrderRequest({
             name: product.name,
@@ -372,7 +382,7 @@ export default function ApplyPage() {
             source_url: product.source_url,
             ip: product.ip,
             barcode: (collectionBarcode[index] || product.barcode || "").trim(),
-            qty: Math.max(1, Number(collectionQty[index]) || 1),
+            qty: qtyAt(index),
             contact: contact.trim(),
             note: note.trim(),
           });
@@ -387,6 +397,8 @@ export default function ApplyPage() {
         );
         clearCollection();
         setScrapeUrlValue("");
+        setApplyStep("pick");
+        setApplyView("progress");
         await loadPendingMine();
         await loadRequests();
       }
@@ -411,6 +423,32 @@ export default function ApplyPage() {
     } finally {
       setDepositBusy("");
     }
+  }
+
+  function openStep(next: "pick" | "review" | "submit") {
+    if (next !== "pick" && !collectionPick.length) {
+      setError("请至少勾选一件");
+      setApplyStep("pick");
+      return;
+    }
+    if (next === "submit" && selectedDepositTotal.missing > 0) {
+      setError("所选商品须填写单价，才能计算 30% 定金");
+      setApplyStep("review");
+      return;
+    }
+    setError("");
+    setApplyStep(next);
+  }
+
+  function goNext() {
+    if (applyStep === "pick") openStep("review");
+    else if (applyStep === "review") openStep("submit");
+  }
+
+  function goBack() {
+    setError("");
+    if (applyStep === "submit") setApplyStep("review");
+    else setApplyStep("pick");
   }
 
   async function onConfirmAllDeposits() {
@@ -443,7 +481,7 @@ export default function ApplyPage() {
           <p className="apply-brand">Stockgood</p>
           <h1>订单申请</h1>
           <p className="apply-lead">
-            批量粘贴商品链接抓取后勾选提交；下方可查看已申请订单进度。
+            下单分三步完成。进度和待付定金单独查看。
           </p>
         </div>
         <div className="apply-account" ref={accountMenuRef}>
@@ -488,19 +526,71 @@ export default function ApplyPage() {
         </div>
       </header>
 
-      <section className="apply-panel">
-        <h2>提交申请</h2>
-        <p className="muted">
-          须登录后提交。创建后为「待付定金」，支付商品金额 {Math.round(depositRate * 100)}%
-          定金并确认后才会正式提交（后续对接财务系统自动确认）。
+      <nav className="app-nav" aria-label="申请">
+        <div className="nav-sections">
+          <button
+            type="button"
+            className={applyView === "order" ? "active" : ""}
+            onClick={() => setApplyView("order")}
+          >
+            下单
+          </button>
+          <button
+            type="button"
+            className={applyView === "progress" ? "active" : ""}
+            onClick={() => setApplyView("progress")}
+          >
+            进度
+          </button>
+        </div>
+        <p className="nav-hint">
+          {applyView === "progress"
+            ? "查看待付定金，并按状态浏览已申请订单。"
+            : applyStep === "pick"
+              ? "粘贴链接或页面内容，抓取后勾选要买的商品。"
+              : applyStep === "review"
+                ? "核对单价、数量和备注。定金按所选商品金额计算。"
+                : "创建待付定金申请。确认付款后才会正式提交。"}
         </p>
-        {!authUser ? (
-          <p className="error">
-            未登录不可提交。请先{" "}
-            <a href="/me">登录 / 注册</a>
-            。
-          </p>
+        {applyView === "order" ? (
+          <div className="nav-steps">
+            {(
+              [
+                ["pick", "选商品"],
+                ["review", "确认清单"],
+                ["submit", "提交"],
+              ] as const
+            ).map(([id, label], index) => (
+              <span className="nav-step" key={id}>
+                {index > 0 ? (
+                  <span className="nav-arrow" aria-hidden>
+                    →
+                  </span>
+                ) : null}
+                <button
+                  type="button"
+                  className={applyStep === id ? "active" : ""}
+                  aria-current={applyStep === id ? "step" : undefined}
+                  onClick={() => openStep(id)}
+                >
+                  {index + 1} {label}
+                </button>
+              </span>
+            ))}
+          </div>
         ) : null}
+      </nav>
+
+      {error ? (
+        <p className="error" style={{ whiteSpace: "pre-wrap" }}>
+          {error}
+        </p>
+      ) : null}
+      {message ? <p className="ok-msg">{message}</p> : null}
+
+      {applyView === "order" && applyStep === "pick" ? (
+      <section className="apply-panel">
+        <h2>选商品</h2>
         <div className="scrape-bar scrape-bar-batch">
           <label className="grow">
             URL 列表 / HTML 片段 / JSON
@@ -534,35 +624,11 @@ export default function ApplyPage() {
           </div>
         </div>
 
-        {error ? <p className="error" style={{ whiteSpace: "pre-wrap" }}>{error}</p> : null}
-        {message ? <p className="ok-msg">{message}</p> : null}
-
-        {collection.length > 0 && (
+        {collection.length > 0 ? (
           <div className="collection-box">
-            <div className="form-grid">
-              <label>
-                ID编号（可选）
-                <input
-                  value={contact}
-                  onChange={(e) => setContact(e.target.value)}
-                  placeholder="你的 ID"
-                />
-              </label>
-              <label>
-                备注（可选）
-                <input
-                  value={note}
-                  onChange={(e) => setNote(e.target.value)}
-                  placeholder="规格、颜色等"
-                />
-              </label>
-            </div>
             <div className="toolbar">
               <span className="muted">
                 清单 {collection.length} 条，已选 {collectionPick.length}
-                {collectionPick.length > 0
-                  ? ` · 商品合计 ${formatYen(selectedDepositTotal.goods)} · 定金 ${selectedDepositTotal.ratePct}% ${formatYen(selectedDepositTotal.deposit)}`
-                  : ""}
               </span>
               <button
                 type="button"
@@ -579,15 +645,6 @@ export default function ApplyPage() {
                 onClick={() => setCollectionPick([])}
               >
                 取消勾选
-              </button>
-              <button
-                type="button"
-                className="btn btn-primary"
-                disabled={scrapeBusy || !authUser}
-                onClick={() => void onSubmitRequests()}
-                title={!authUser ? "请先登录" : undefined}
-              >
-                {scrapeBusy ? "提交中…" : "创建待付定金申请"}
               </button>
             </div>
             <div className="collection-list">
@@ -629,66 +686,250 @@ export default function ApplyPage() {
                       </span>
                     </span>
                   </label>
-                  <label className="collection-qty">
-                    单价
-                    <input
-                      type="number"
-                      step="0.01"
-                      min={0}
-                      value={collectionPrice[index] ?? ""}
-                      disabled={!collectionPick.includes(index)}
-                      placeholder="JPY"
-                      onChange={(e) =>
-                        setCollectionPrice({
-                          ...collectionPrice,
-                          [index]: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="collection-qty">
-                    JAN
-                    <input
-                      className="collection-jan"
-                      type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]{8}|[0-9]{13}"
-                      maxLength={13}
-                      value={collectionBarcode[index] ?? ""}
-                      disabled={!collectionPick.includes(index)}
-                      placeholder="8/13位"
-                      title="仅接受校验通过的 JAN/EAN（8 或 13 位）"
-                      onChange={(e) =>
-                        setCollectionBarcode({
-                          ...collectionBarcode,
-                          [index]: e.target.value.replace(/\D/g, "").slice(0, 13),
-                        })
-                      }
-                    />
-                  </label>
-                  <label className="collection-qty">
-                    数量
-                    <input
-                      type="number"
-                      min={1}
-                      value={collectionQty[index] || "1"}
-                      disabled={!collectionPick.includes(index)}
-                      onChange={(e) =>
-                        setCollectionQty({
-                          ...collectionQty,
-                          [index]: e.target.value,
-                        })
-                      }
-                    />
-                  </label>
                 </div>
               ))}
             </div>
           </div>
+        ) : (
+          <p className="muted">抓取完成后在这里勾选。</p>
         )}
+        {collection.length > 0 ? (
+          <div className="apply-step-actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={scrapeBusy}
+              onClick={goNext}
+            >
+              下一步
+            </button>
+          </div>
+        ) : null}
       </section>
+      ) : null}
 
-      {authUser && pendingMine.length > 0 ? (
+      {applyView === "order" && applyStep === "review" ? (
+      <section className="apply-panel">
+        <h2>确认清单</h2>
+        {collectionPick.length === 0 ? (
+          <p className="muted">还没有勾选商品。</p>
+        ) : (
+          <div className="collection-box">
+            <div className="form-grid">
+              <label>
+                ID编号（可选）
+                <input
+                  value={contact}
+                  onChange={(e) => setContact(e.target.value)}
+                  placeholder="你的 ID"
+                />
+              </label>
+              <label>
+                备注（可选）
+                <input
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  placeholder="规格、颜色等"
+                />
+              </label>
+            </div>
+            <div className="toolbar">
+              <span className="muted">
+                已选 {collectionPick.length} · 商品合计{" "}
+                {formatYen(selectedDepositTotal.goods)} · 定金{" "}
+                {selectedDepositTotal.ratePct}%{" "}
+                {formatYen(selectedDepositTotal.deposit)}
+                {selectedDepositTotal.missing > 0
+                  ? ` · ${selectedDepositTotal.missing} 件未填单价`
+                  : ""}
+              </span>
+            </div>
+            <div className="collection-list">
+              {collection.map((product, index) =>
+                collectionPick.includes(index) ? (
+                  <div
+                    className="collection-row"
+                    key={`${product.source_url}-${index}`}
+                  >
+                    <span className="collection-main">
+                      {product.image_url ? (
+                        <img
+                          className="thumb"
+                          src={product.image_url}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="thumb placeholder" />
+                      )}
+                      <span>
+                        <strong>{product.name}</strong>
+                        <span className="muted">
+                          {" "}
+                          · {product.shop}
+                          {product.unit_cost != null
+                            ? ` · ¥${product.unit_cost}`
+                            : " · 无标价"}
+                        </span>
+                      </span>
+                    </span>
+                    <label className="collection-qty">
+                      单价
+                      <input
+                        type="number"
+                        step="0.01"
+                        min={0}
+                        value={collectionPrice[index] ?? ""}
+                        placeholder="JPY"
+                        onChange={(e) =>
+                          setCollectionPrice({
+                            ...collectionPrice,
+                            [index]: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="collection-qty">
+                      JAN
+                      <input
+                        className="collection-jan"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]{8}|[0-9]{13}"
+                        maxLength={13}
+                        value={collectionBarcode[index] ?? ""}
+                        placeholder="8/13位"
+                        title="仅接受校验通过的 JAN/EAN（8 或 13 位）"
+                        onChange={(e) =>
+                          setCollectionBarcode({
+                            ...collectionBarcode,
+                            [index]: e.target.value
+                              .replace(/\D/g, "")
+                              .slice(0, 13),
+                          })
+                        }
+                      />
+                    </label>
+                    <label className="collection-qty">
+                      数量
+                      <input
+                        type="number"
+                        min={1}
+                        value={collectionQty[index] || "1"}
+                        onChange={(e) =>
+                          setCollectionQty({
+                            ...collectionQty,
+                            [index]: e.target.value,
+                          })
+                        }
+                      />
+                    </label>
+                  </div>
+                ) : null,
+              )}
+            </div>
+          </div>
+        )}
+        <div className="apply-step-actions">
+          <button type="button" className="btn" onClick={goBack}>
+            上一步
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={scrapeBusy}
+            onClick={goNext}
+          >
+            下一步
+          </button>
+        </div>
+      </section>
+      ) : null}
+
+      {applyView === "order" && applyStep === "submit" ? (
+      <section className="apply-panel">
+        <h2>提交</h2>
+        <p className="muted">
+          须登录后提交。创建后为「待付定金」，支付商品金额{" "}
+          {Math.round(depositRate * 100)}%
+          定金并确认后才会正式提交（后续对接财务系统自动确认）。
+        </p>
+        {!authUser ? (
+          <p className="error">
+            未登录不可提交。请先 <a href="/me">登录 / 注册</a>。
+          </p>
+        ) : null}
+        {collectionPick.length === 0 ? (
+          <p className="muted">还没有勾选商品。</p>
+        ) : (
+          <>
+            <p className="muted">
+              ID编号 {contact.trim() || "—"} · 备注 {note.trim() || "—"}
+            </p>
+            <p>
+              商品合计 {formatYen(selectedDepositTotal.goods)} · 定金{" "}
+              {selectedDepositTotal.ratePct}%{" "}
+              {formatYen(selectedDepositTotal.deposit)}
+            </p>
+            <div className="collection-list">
+              {collection.map((product, index) => {
+                if (!collectionPick.includes(index)) return null;
+                const unit = unitAt(index);
+                const qty = qtyAt(index);
+                const barcode = (
+                  collectionBarcode[index] ||
+                  product.barcode ||
+                  ""
+                ).trim();
+                return (
+                  <div
+                    className="collection-row"
+                    key={`${product.source_url}-${index}`}
+                  >
+                    <span className="collection-main">
+                      {product.image_url ? (
+                        <img
+                          className="thumb"
+                          src={product.image_url}
+                          alt=""
+                          referrerPolicy="no-referrer"
+                        />
+                      ) : (
+                        <span className="thumb placeholder" />
+                      )}
+                      <span>
+                        <strong>{product.name}</strong>
+                        <span className="muted"> · {product.shop}</span>
+                      </span>
+                    </span>
+                    <span className="apply-line-meta">
+                      ×{qty} · {formatYen(unit)}
+                      {barcode ? ` · JAN ${barcode}` : ""}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+        <div className="apply-step-actions">
+          <button type="button" className="btn" onClick={goBack}>
+            上一步
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={scrapeBusy || !authUser}
+            onClick={() => void onSubmitRequests()}
+            title={!authUser ? "请先登录" : undefined}
+          >
+            {scrapeBusy ? "提交中…" : "创建待付定金申请"}
+          </button>
+        </div>
+      </section>
+      ) : null}
+
+      {applyView === "progress" && authUser && pendingMine.length > 0 ? (
         <section className="apply-panel">
           <div className="apply-list-head">
             <h2>待付定金</h2>
@@ -730,6 +971,7 @@ export default function ApplyPage() {
         </section>
       ) : null}
 
+      {applyView === "progress" ? (
       <section className="apply-panel">
         <div className="apply-list-head">
           <h2>已申请订单</h2>
@@ -786,6 +1028,7 @@ export default function ApplyPage() {
           )}
         </div>
       </section>
+      ) : null}
     </div>
   );
 }

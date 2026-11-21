@@ -94,7 +94,7 @@ def _run_backup(reason: str) -> None:
 
 
 def _kill_port(port: int) -> None:
-    """Kill processes listening on port (Windows), matching stop.bat behavior."""
+    """Kill processes listening on port (Windows), matching 停止.bat behavior."""
     if sys.platform != "win32":
         return
     try:

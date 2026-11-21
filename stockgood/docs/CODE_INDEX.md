@@ -6,6 +6,7 @@
 - `AGENTS.md`：Agent 怎么工作
 - 本文件：FEATURE 对应哪些代码
 - `docs/CHANGELOG_AI.md`：为什么这么改、当前状态、Session Handoff
+- `docs/ORDER_IMPORT.md`：抓取商品链接实现原理与各站解析
 
 新会话或较大改动前：先读 CODE_INDEX 定位，再搜 `CHANGELOG_AI.md` 里同一 `FEATURE: XXXXX` 的历史。
 
@@ -16,13 +17,16 @@
 - [FEATURE: AUTH](#feature-auth)
 - [FEATURE: USER_MANAGEMENT](#feature-user_management)
 - [FEATURE: CUSTOMER_PORTAL](#feature-customer_portal)
+- [FEATURE: WAREHOUSE](#feature-warehouse)
 - [FEATURE: ORDER](#feature-order)
 - [FEATURE: ORDER_IMPORT](#feature-order_import)
+- [FEATURE: RETAILER_CART](#feature-retailer_cart)
 - [FEATURE: ORDER_REQUEST](#feature-order_request)
 - [FEATURE: INBOUND](#feature-inbound)
 - [FEATURE: INVENTORY](#feature-inventory)
 - [FEATURE: OUTBOUND_BATCH](#feature-outbound_batch)
 - [FEATURE: INV_EXPORT](#feature-inv_export)
+- [FEATURE: SF_EXPORT](#feature-sf_export)
 - [FEATURE: FEE_DETAIL](#feature-fee_detail)
 - [FEATURE: FINANCE](#feature-finance)
 - [FEATURE: APPLY_STATS](#feature-apply_stats)
@@ -56,9 +60,11 @@
 
 Cookie 会话登录、登出、当前用户、客户自助注册。可选环境变量要求登录。
 
+**临时**：员工主界面登录已关掉（`auth.py` `auth_required()` 在非强制 `STOCKGOOD_AUTH_REQUIRED=true` 时返回 false；`App.tsx` 员工 `AuthPanel` 已短路）。客户门户登录仍在。
+
 ### 用户入口
 
-- 员工主界面未登录时 `AuthPanel`（`allowRegister=false`）
+- 员工主界面未登录时 `AuthPanel`（`allowRegister=false`；**当前已用 `false &&` 短路，不弹出**）
 - `/apply`、`/me` 上的登录/注册（`allowRegister` 因页而异）
 
 ### 前端页面
@@ -200,6 +206,48 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ---
 
+## FEATURE: WAREHOUSE
+
+### 功能说明
+
+员工页头可切换仓库，也可新建空仓库。订单、进库运单、在库箱、出库批次和财务月汇总按当前仓库分开。已有数据归到「默认仓库」。顾客申请仍是全站一份，确认做成库存订单时写入当前仓库。各仓库的在库箱号各自从 1 起，互不影响。
+
+### 用户入口
+
+员工主界面页头「仓库」下拉和「新建仓库」。
+
+### 前端
+
+- `frontend/src/App.tsx`（页头切换；切换后重新拉取当前 Tab）
+- `frontend/src/api.ts`：`fetchWarehouses`、`createWarehouse`；请求带 `X-Warehouse-Id`
+
+### 后端接口
+
+- `GET /api/warehouses`
+- `POST /api/warehouses`
+
+### 后端实现
+
+- `backend/app/services/warehouses.py`
+- `backend/app/warehouse_scope.py`（请求内当前仓库；未设置时测试仍看整库）
+- `backend/app/main.py` 中间件按请求头绑定仓库
+
+### 数据库
+
+- `warehouses`
+- `orders.warehouse_id`、`stock_boxes.warehouse_id`、`outbound_batches.warehouse_id`
+- `stock_boxes` 唯一约束为 `(warehouse_id, box_no)`
+
+### 测试
+
+- `backend/tests/test_warehouses.py`
+
+### 依赖关系
+
+订单、进库、在库、出库、财务月汇总读取时带上当前仓库。顾客申请不按仓库过滤。
+
+---
+
 ## FEATURE: ORDER
 
 ### 功能说明
@@ -256,11 +304,13 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 依赖关系
 
-被 `INBOUND`、`INVENTORY`、`OUTBOUND_BATCH`、`FINANCE`、`ORDER_IMPORT` 使用。
+被 `INBOUND`、`INVENTORY`、`OUTBOUND_BATCH`、`FINANCE`、`ORDER_IMPORT`、`RETAILER_CART`（模板加购「生成库存订单」→ `createOrder`）使用。
 
 ---
 
 ## FEATURE: ORDER_IMPORT
+
+原理与各站解析见 [`docs/ORDER_IMPORT.md`](ORDER_IMPORT.md)。
 
 ### 功能说明
 
@@ -268,30 +318,44 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 用户入口
 
-主界面 Tab「抓取」。顾客申请页另有公开抓取（见 `ORDER_REQUEST`）。
+主界面 Tab「抓取导入」。顾客申请页另有公开抓取（见 `ORDER_REQUEST`）。加购在独立 Tab「模板加购」（`RETAILER_CART`）。
 
 ### 前端
 
 - `frontend/src/App.tsx`（`tab === "scrape"`；`appendScrapeProducts` 同商品可回填 JAN）
-- `frontend/src/scrapePaste.ts`（HTML/JSON 粘贴识别、`scrapeProductMatchKey`）
+- `frontend/src/scrapePaste.ts`（HTML/JSON 粘贴识别、`scrapeProductMatchKey`；ZOZO 分色须带 `?did=`，键为 `zozo:goods:{gid}:did:{did}`）
 - `frontend/src/scrapeDelay.ts`
-- `frontend/src/api.ts`：`scrapeUrl`、`createItemsBatch`
+- `frontend/src/api.ts`：`scrapeUrl`、`createOrder`（抓取 Tab 导入）；`createItemsBatch` 仍可用但当前 Tab 未调用
+- `extension/`：浏览器插件。点一下把当前页已渲染 HTML 交给 `POST /api/scrape`，不另记到货地址。本机 `127.0.0.1:8002` 没开时提示先运行 `启动.bat`；已执行 `extension/注册拉起.bat` 后，插件会自己拉起服务。
 
 ### 后端接口
 
 - `POST /api/scrape`
-- `POST /api/items/batch`
+- `POST /api/orders`（抓取导入）
+- `POST /api/items/batch`（按 order_ref 批量建单，抓取 UI 未接线）
 
 ### 后端实现
 
 - `backend/app/scrapers/preview.py`（`scrape_url`、`scrape_html_document`；商品页通用 `extract_jan_from_html`）
-- `backend/app/scrapers/*.py`（站点特化：zozo、andmall/&mall、vvstore、sofmap、cystore、animate、eeo、hmv、hobbysearch 等）
+- `backend/app/scrapers/*.py`（站点特化：zozo、andmall/&mall、vvstore、sofmap、cystore、animate、eeo、lafary、medicos、hmv、hobbysearch、futureshop 等）
   - &mall：整页 SSR HTML、Elements 列表 outerHTML、Network `shop-order-skus` JSON；相同 SKU 合并数量。Ctrl+U 不含もっと見る结果。
   - vvstore：ご注文履歴詳細整页 HTML；含单价/数量/运费/注文番号，无 JAN；相同商品 URL 合并数量。订单后再抓 `/products/detail/{id}` 商品页，前端按商品 ID 回填 JAN。
   - sofmap：`product_detail.aspx?sku=` 商品页；JANコード / JSON-LD。另支持「お取引の詳細」订单 HTML（数量/运费/注文番号；图 URL 常含 JAN）；前端按 sku 匹配。
   - cystore：購入履歴詳細整页 HTML；含单价/数量/运费/注文番号；订单页通常无 JAN；商品 ID 取自图片路径；相同 pid 合并数量。
-  - animate：注文履歴整页 HTML；行内金额为小计（单价=小计÷点数）；含运费/注文番号；跳过特典；商品 ID 取自 `/pd/{id}/`；相同 pid 合并数量。
+  - animate：注文履歴整页 HTML；行内金额为小计（单价=小计÷点数）；含运费/注文番号；跳过特典；商品 ID 取自 `/pd/{id}/`；相同 pid 合并数量；JAN 取自商品图 `image=` 文件名且须通过校验位。详见 [`docs/ORDER_IMPORT_ANIMATE.md`](ORDER_IMPORT_ANIMATE.md)。
+  - gamers：ゲーマーズ注文履歴（`gamers.py`）。N点旁边金额为行小计。不读お届け先和运单号。图文件名不是 JAN。异步打开商品页，取店舗予約用バーコード。前端键 `gamers:product:{id}`。
   - eeo：ご注文履歴詳細整页 HTML；含单价/数量/运费/注文番号；邮件正文商品コード可回填 JAN；商品 ID 取自 `/products/detail/{id}`；相同 pid 合并数量。
+  - lafary：Shopify 顾客「注文 #…」整页 HTML；含单价/数量/运费/注文番号；订单页通常无 JAN；按品名合并数量。
+  - shopify_account：新版顾客账户已渲染「注文アイテム」（`role=row`、`￥n/ユニット`、配送/合計）。单价税込。同名不同规格不合并。Ctrl+U 空壳不解析。片段可不带店铺域名。
+  - yahoo_shopping：Yahoo!ショッピング「注文履歴詳細」整页 HTML。`.elPrice` 为税込单价，`×N` 为数量。同链接不同规格不合并。订单页无 JAN。前端键 `yahoo:{store}:{item}:{品名}`。
+  - movic：ムービック与カドスト「購入履歴詳細」整页 HTML（`movic.py`）。行合计÷数量为税込单价。手数料不算运费。送料只取订单金额表。不读 cart_item，不把配送表再计一遍。13 位商品代码校验通过才填 JAN。列表页不解析。订单页无图时再打开商品页，取 `img.js-img-source` 的 `/img/goods/L/`（没有则用 og:image）。前端键 `movic:goods:{code}` / `kadokawa:goods:{code}`。
+  - storegk：MakeShop「注文履歴」（`storegk.py`）。`store-gk.com` 与 THEキャラ `the-chara.com`（图床 `thechara55`）单价为税抜×1.1。ツインクル `shop.twincre.com`（图床 `TwinCre`）小计已标税込，单价不再乘 1.1。一页多笔不合成一个订单号。不读送付先。前端键 `storegk:goods:{id}` / `thechara:goods:{id}` / `twincre:goods:{id}`。
+  - amnibus：`historyCard` 订单卡片（`amnibus.py`）。数量旁价格为税込单价。无标价景品记 0。多笔卡片不合并。订单页无 JAN。前端键 `amnibus:product:{id}`。
+  - aniplex：online.aniplex.co.jp 注文詳細（`aniplex.py`）。単価（税込）为单价。商品代码不是 JAN。不读配送先。两个注文番号不合并。
+  - thebase：BASE「ご注文情報照会」（`thebase.py`，`c.thebase.in/dynamic_receipts`）。商品単価为税込单价。规格写进品名，同一 `/items/{id}` 不合并。送料与合計金額分开。不读购买者、地址、电话、邮箱、运单号。前端键 `base:{host}:item:{id}:{品名}`。
+  - medicos：EC-CUBE「購入履歴詳細」整页 HTML；含单价/数量/运费/注文番号；邮件 BOXJAN 可回填 JAN；商品 ID 取自图片文件名或 `/products/detail/{id}`；相同 pid/品名合并数量。
+  - yostar：SPA + ecshop-api；商品 URL 调 `product/detail`；Ctrl+U 空壳不可用；已渲染ご注文履歴用 `.price-single` 为单价、`xN` 为数量；注文/商品也可粘贴 Network JSON；匹配键 `yostar:product:{id}`。
+  - storesjp：STORES `*.stores.jp`；商品页 URL 优先本机 curl（httpx 常 403）；亦可粘贴 SSR HTML；注文可贴已渲染「購入詳細」HTML（`.order_history_item`）或 Network `/web/customers/orders/{id}` JSON；行小计÷数量；匹配键 `stores:item:{id}`。
 - `backend/app/services/items.py`：`create_items_batch`
 
 ### 测试
@@ -304,11 +368,57 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - `backend/test_sofmap_order.py`
 - `backend/test_cystore_order.py`
 - `backend/test_animate_order.py`
+- `backend/test_gamers_order.py`
 - `backend/test_eeo_order.py`
+- `backend/test_lafary_order.py`
+- `backend/test_medicos_order.py`
+- `backend/test_yostar_order.py`
+- `backend/test_storesjp_order.py`
+- `backend/test_yahoo_shopping_order.py`
+- `backend/test_movic_order.py`
+- `backend/test_amnibus_order.py`
+- `backend/test_aniplex_order.py`
+- `backend/test_base_order.py`
 
 ### 依赖关系
 
 写入 `ORDER`（`orders`/`items`）。公开抓取 `POST /api/public/scrape` 同属抓取引擎，入口在 `ORDER_REQUEST`。
+
+---
+
+## FEATURE: RETAILER_CART
+
+### 功能说明
+
+主页面独立 Tab「模板加购」：上传 CSV/xlsx（列：链接、数量），按店筛白名单并合并同商品数量。白名单分五类，购物车不能混店：Shopify permalink（`bushiroad-store.com` 税抜×1.1，其余税込：`lafary.shop`、`animeshi.jp`、`cocollabo.net`、`qinocop.com`、`mono-mo.com`、`cho-kaguyahime-officialstore.bookstores.jp`）；FutureShop GET `/shop/cart/cart.aspx?goods=&qty=`（`jumpcs.shueisha.co.jp`、`store.kadokawa.co.jp`）；HMV GET `/basket/inbasket/?sku=`（`hmv.co.jp`，商品页 `item_..._编号`，每次打开加 1 件）；MakeShop POST `/api/basket/add.html`（`miraithings.com`、`pricafe.shop`、`store-gk.com`）；asobi store POST `/cart`（`shop.asobistore.jp`）。`POST /api/retailer-cart/parse` 对 Shopify 行并发拉 `products/{handle}.json`；对 FutureShop（`store.kadokawa.co.jp`、`jumpcs.shueisha.co.jp`）拉商品页 HTML 补名称、大图、税込价。`POST /api/retailer-cart/add` 按 kind 返回链接或表单，前端在员工浏览器打开。付款后仍按店填订单号+总价，走 `POST /api/orders`。
+
+### 用户入口
+
+主界面 Tab「模板加购」（与「抓取导入」并列，财务角色不可见）。
+
+### 前端
+
+- `frontend/src/App.tsx`（`tab === "retailer-cart"`）
+- `frontend/src/api.ts`：`parseRetailerCartTemplate`、`addRetailerCart`、`downloadRetailerCartTemplate`、`createOrder`
+
+### 后端接口
+
+- `GET /api/retailer-cart/template.csv`
+- `POST /api/retailer-cart/parse`
+- `POST /api/retailer-cart/add`
+
+### 后端实现
+
+- `backend/app/services/retailer_cart.py`
+
+### 测试
+
+- `backend/test_retailer_cart.py`
+- `backend/tests/test_retailer_cart_order.py`（IsolatedDbTestCase 临时 sqlite）
+
+### 依赖关系
+
+加购本身不写 `orders`/`items`。生成库存订单复用 FEATURE: ORDER 的 `createOrder` / `POST /api/orders`（一店一单）。Shopify 购物车 permalink 按 host 拆分。不要与 `ORDER_IMPORT` / `ORDER_REQUEST` 混用按钮。
 
 ---
 
@@ -320,7 +430,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 用户入口
 
-- 公开页 `/apply`（`ApplyPage.tsx`）
+- 公开页 `/apply`（`ApplyPage.tsx`）：同页步骤「选商品 → 确认清单 → 提交」，「进度」查看待付定金和已申请订单
 - 员工 Tab「申请单」
 - 客户 `/me` 确认定金（`CUSTOMER_PORTAL`）
 
@@ -451,7 +561,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 ### 功能说明
 
-出库批次：草稿分箱、同一批次共用运单号、包装尺寸、创建锁定货款应收、未签收前编辑、整批签收。
+出库批次：草稿分箱、每箱独立运单号与运费 JPY、包装尺寸、创建锁定货款应收、未签收前编辑、整批签收。
 
 ### 用户入口
 
@@ -463,6 +573,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 - 「编辑批次」→ `updateOutboundBatch`
 - 「确认整批签收」→ `confirmOutboundBatch`
 - 「导出 INV」→ `INV_EXPORT`
+- 「导出 SF」→ `SF_EXPORT`
 - 「费用明细 Excel」→ `FEE_DETAIL`
 
 ### 前端
@@ -490,7 +601,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 ### 数据库
 
 - `outbound_batches`（含财务列、`invoice_ship_date` 迁移列）
-- `shipments`（`direction=outbound`，`batch_id`，包装列 `net_weight` 等）
+- `shipments`（`direction=outbound`，`batch_id`，`tracking_no`，`freight_jpy`，包装列 `net_weight` 等）
 - `shipment_items`
 - `items`（状态改为 `outbound_shipped` / `delivered`）
 
@@ -553,6 +664,50 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 ### 测试
 
 - `backend/tests/test_exports.py`（双 Sheet 名、PACKING F5 而非 F6、预览 `FIT0`、模板文件不被写回）
+
+---
+
+## FEATURE: SF_EXPORT
+
+### 功能说明
+
+按业务样表单 Sheet 导出顺丰申报 Excel。列：运单号*、商品条形码、商品中文名称*、品牌*、産地*、规格*、数量*、单价*、收件人信息*。**表头「运单号*」在本系统填发货箱号**（`FIT{batch}-{box}`，与 INV packing 同口径），不是快递单号；每箱首行写箱号，同箱后续行空。整表首行写收件人。同箱内同条码同单价合并数量。品牌取货品 `ip`；产地固定「日本」、规格固定「个」。不要求包装尺寸与快递单号。
+
+### 用户入口
+
+出库 Tab：「导出 SF」（已有批次）、「导出 SF」（创建前预览）。
+
+### 前端
+
+- `frontend/src/App.tsx`：`onExportDraftSf`、`downloadOutboundSf`
+- `frontend/src/api.ts`：`downloadOutboundSf`、`downloadOutboundSfPreview`
+
+### 后端接口
+
+- `GET /api/outbound-batches/{batch_id}/sf.xlsx`
+- `POST /api/outbound-batches/preview-sf.xlsx`
+
+### 后端实现
+
+- `backend/app/services/outbound_batches.py`：`export_sf_xlsx`、`export_sf_preview_xlsx`
+- `backend/app/services/sf_template.py`：`build_sf_workbook`
+- 模板（只读）：`backend/data/templates/sf_export.xlsx`
+
+### 数据库
+
+读 `outbound_batches`、`shipments.tracking_no`、`items`（条码、名称、ip、单价、数量）。不写库。
+
+### 调用链
+
+按钮「导出 SF」→ `downloadOutboundSf(id)` → `GET .../sf.xlsx` → `export_sf_xlsx` → `build_sf_workbook` → 模板填数 → xlsx bytes
+
+### 依赖关系
+
+`OUTBOUND_BATCH`。收件人常量与 INV 中文地址一致。
+
+### 测试
+
+- `backend/tests/test_exports.py`（表头、首行收件人、次行无运单号、预览 `FIT0`、模板不被写回）
 
 ---
 
@@ -629,6 +784,7 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 
 - `orders.exchange_rate`、`shipping_fee`
 - `outbound_batches` 财务列
+- `shipments.freight_jpy`（每箱国际运费 JPY；各箱都有则批次 CNY=合计×运费汇率）
 
 ### 测试
 
@@ -791,6 +947,8 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 | `backend/app/models.py` | Pydantic 请求/响应 | 全部 API |
 | `frontend/src/api-types.generated.ts` | OpenAPI 生成的 TS 类型 | `api.ts` |
 | `frontend/src/api.ts` | 浏览器 `fetch` 封装（类型引用生成文件） | 全部前端 |
+| `frontend/src/staff-ui.css` | 员工主界面侧边导航、护眼配色和响应式样式（限定 `.app`） | 员工端各 Tab |
+| `frontend/src/styles.css` | 全局共享基础样式与客户页面样式 | 全部前端 |
 | `backend/app/settings.py` | 环境变量、库模式、CORS | SYSTEM / AUTH |
 | `backend/app/services/order_status.py` | 订单状态由明细汇总 | ORDER / INBOUND / OUTBOUND |
 | `backend/app/tracking_links.py` | 承运商查询 URL | INBOUND / OUTBOUND |
@@ -835,7 +993,18 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 | `backend/test_sofmap_order.py` | ORDER_IMPORT |
 | `backend/test_cystore_order.py` | ORDER_IMPORT |
 | `backend/test_animate_order.py` | ORDER_IMPORT |
+| `backend/test_gamers_order.py` | ORDER_IMPORT |
+| `backend/test_retailer_cart.py` | RETAILER_CART |
 | `backend/test_eeo_order.py` | ORDER_IMPORT |
+| `backend/test_lafary_order.py` | ORDER_IMPORT |
+| `backend/test_shopify_account_order.py` | ORDER_IMPORT |
+| `backend/test_yahoo_shopping_order.py` | ORDER_IMPORT |
+| `backend/test_movic_order.py` | ORDER_IMPORT |
+| `backend/tests/test_warehouses.py` | WAREHOUSE |
+| `backend/test_amnibus_order.py` | ORDER_IMPORT |
+| `backend/test_aniplex_order.py` | ORDER_IMPORT |
+| `backend/test_base_order.py` | ORDER_IMPORT |
+| `backend/test_medicos_order.py` | ORDER_IMPORT |
 | `backend/_smoke_finance.py` | FINANCE 影子库冒烟 |
 | `backend/_smoke_product_kind.py` | SYSTEM / 种类 |
 | `backend/_smoke_add_to_box.py` | INVENTORY |

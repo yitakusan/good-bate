@@ -5,6 +5,7 @@ pydantic-settings
 httpx
 beautifulsoup4
 openpyxl
+python-multipart
 pystray
 Pillow
 passlib[bcrypt]

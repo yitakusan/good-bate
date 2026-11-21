@@ -1,10 +1,9 @@
 @echo off
+REM Tray launcher. Chinese-named wrapper calls this file.
 chcp 65001 >nul
 setlocal
 cd /d "%~dp0"
-
 if not defined STOCKGOOD_DB_MODE set STOCKGOOD_DB_MODE=production
-
 if not exist "backend\.venv\Scripts\pythonw.exe" (
   if not exist "backend\.venv\Scripts\python.exe" (
     echo [ERROR] missing backend\.venv
@@ -13,15 +12,12 @@ if not exist "backend\.venv\Scripts\pythonw.exe" (
     exit /b 1
   )
 )
-
 if not exist "frontend\node_modules" (
   echo [ERROR] missing frontend\node_modules
   echo Run: cd frontend ^& npm install
   pause
   exit /b 1
 )
-
-REM Prefer pythonw (no console). Fall back to python.
 set "PYW=%~dp0backend\.venv\Scripts\pythonw.exe"
 set "PY=%~dp0backend\.venv\Scripts\python.exe"
 if exist "%PYW%" (

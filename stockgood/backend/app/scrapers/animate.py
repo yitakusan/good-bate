@@ -1,11 +1,13 @@
 """animate-onlineshop.jp（アニメイト通販）注文履歴 HTML 解析。
 
 粘贴マイページ「注文履歴」整页源代码（可含检索后的单笔注文）→ 多行商品 + 注文番号/送料/合计。
-订单页通常无 JAN；商品 ID 取自链接 `/pd/{id}/`。
+商品 ID 取自链接 `/pd/{id}/`。
+商品图 `image={JAN}_...jpg` 在校验位通过时写入 barcode；页面其它数字不当条码。
 行内金额多为小计（点数 × 单价），入库单价 = 小计 / 点数。
 特典块（.order_item_privilege）跳过。相同 pid / 品名自动合并数量。
 
 样例：templates/animate-onlineshop.jp.order-history.fixture.html
+AI 说明：docs/ORDER_IMPORT_ANIMATE.md
 """
 
 from __future__ import annotations
@@ -16,6 +18,8 @@ from urllib.parse import urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag  # type: ignore[import-untyped]
 
+from app.scrapers.jan import canonicalize_jan
+
 SHOP = "animate-onlineshop.jp"
 BASE = "https://www.animate-onlineshop.jp"
 
@@ -23,6 +27,11 @@ _YEN_RE = re.compile(r"([\d,]+)\s*円")
 _QTY_RE = re.compile(r"([\d,]+)\s*点")
 _PD_RE = re.compile(r"/pd/(\d+)/?", re.I)
 _ORDER_NO_RE = re.compile(r"注文番号\s*([0-9]{6,})")
+# CDN file is {JAN}_n.jpg or {JAN}_n_{timestamp}.jpg. Do not scan the rest of the URL.
+_IMAGE_FILE_JAN_RE = re.compile(
+    r"(?:^|[?&])image=(\d{8}|\d{13})(?:[_.]|$)",
+    re.I,
+)
 
 
 def is_animate_url(url: str) -> bool:
@@ -40,6 +49,13 @@ def is_animate_order_history_html(html: str) -> bool:
     if not text:
         return False
     lower = text.lower()
+    # ゲーマーズ reuses the same order card, but JAN is not in the image filename.
+    if (
+        "tc-gamers" in lower
+        or "gamers.co.jp" in lower
+        or "ゲーマーズ" in text
+    ):
+        return False
     has_site = (
         "animate-onlineshop.jp" in lower
         or "techorus-cdn.com" in lower
@@ -103,6 +119,14 @@ def _abs_url(src: str) -> str:
 def _product_id_from_href(href: str) -> str:
     m = _PD_RE.search(href or "")
     return m.group(1) if m else ""
+
+
+def _jan_from_image_src(src: str) -> str:
+    """Take JAN only from the Animate image filename, and only if the check digit passes."""
+    m = _IMAGE_FILE_JAN_RE.search(src or "")
+    if not m:
+        return ""
+    return canonicalize_jan(m.group(1), require_jp_prefix=False) or ""
 
 
 def extract_animate_order_ref(html: str) -> str:
@@ -221,7 +245,7 @@ def _line_from_order_item(item: Tag) -> Optional[dict[str, Any]]:
         "image_url": image_url,
         "source_url": source_url,
         "ip": "",
-        "barcode": "",
+        "barcode": _jan_from_image_src(image_src),
         "expected_ship_at": None,
         "expected_ship_period": None,
         "release_date": None,
@@ -282,6 +306,8 @@ def merge_animate_products(lines: list[dict[str, Any]]) -> list[dict[str, Any]]:
             cur["unit_cost"] = line["unit_cost"]
         if not cur.get("image_url") and line.get("image_url"):
             cur["image_url"] = line["image_url"]
+        if not cur.get("barcode") and line.get("barcode"):
+            cur["barcode"] = line["barcode"]
     return [merged[k] for k in order]
 
 

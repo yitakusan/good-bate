@@ -212,7 +212,7 @@ SQLite：生产 `backend/data/stockgood.sqlite`，影子库 `backend/data/stockg
 
 ### Step 1
 
-读取 `AGENTS.md`，了解工作规则。
+读取 `AGENTS.md`，了解工作规则。接着读 `docs/AI_HANDOFF.md`（当前地图与进度），再按任务打开 `docs/CODE_INDEX.md` 里的单个 FEATURE，不要先全库扫描。
 
 ### Step 2
 

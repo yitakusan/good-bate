@@ -38,6 +38,7 @@ class SchemaMigrationTests(IsolatedDbTestCase):
         self.assertEqual(count, len(MIGRATION_NAMES))
         self.assertIn("net_weight", cols)
         self.assertIn("gross_weight", cols)
+        self.assertIn("freight_jpy", cols)
         self.assertIn("invoice_ship_date", batch_cols)
         self.assertIn("product_kind", item_cols)
         with get_conn() as conn:

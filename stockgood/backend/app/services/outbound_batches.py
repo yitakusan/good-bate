@@ -14,6 +14,7 @@ from app.services import action_log
 from app.services.order_status import sync_order_status
 from app.services.shipments import _shipment_with_items
 from app.services.stock_boxes import release_orders as release_stock_box_orders
+from app.warehouse_scope import ensure_visible, stamp_warehouse_id, warehouse_and
 
 # ============================================================
 # FEATURE: OUTBOUND_BATCH
@@ -38,17 +39,47 @@ def _as_float(value: Any) -> Optional[float]:
         return None
 
 
-def _require_shared_batch_tracking(boxes: list[dict[str, Any]]) -> str:
-    filled = [(box.get("tracking_no") or "").strip() for box in boxes]
-    nonempty = [t for t in filled if t]
-    if not nonempty:
-        raise HTTPException(status_code=400, detail="出库批次需要运单号")
-    if len(set(nonempty)) > 1:
-        raise HTTPException(
-            status_code=400,
-            detail="同一出库批次必须使用同一个运单号",
-        )
-    return nonempty[0]
+def _require_each_box_tracking(boxes: list[dict[str, Any]]) -> list[str]:
+    """Each outbound box has its own tracking; do not force a shared number."""
+    out: list[str] = []
+    for i, box in enumerate(boxes, start=1):
+        tracking = (box.get("tracking_no") or "").strip()
+        if not tracking:
+            raise HTTPException(status_code=400, detail=f"第{i}箱需要运单号")
+        out.append(tracking)
+    return out
+
+
+def _assert_trackings_free(
+    conn,
+    trackings: list[str],
+    *,
+    exclude_batch_id: Optional[int] = None,
+) -> None:
+    checked: set[str] = set()
+    for tracking in trackings:
+        if tracking in checked:
+            continue
+        checked.add(tracking)
+        if exclude_batch_id is None:
+            exists = conn.execute(
+                "SELECT id FROM shipments WHERE tracking_no = ?",
+                (tracking,),
+            ).fetchone()
+        else:
+            exists = conn.execute(
+                """
+                SELECT id FROM shipments
+                WHERE tracking_no = ?
+                  AND NOT (batch_id = ? AND direction = 'outbound')
+                """,
+                (tracking, exclude_batch_id),
+            ).fetchone()
+        if exists:
+            raise HTTPException(
+                status_code=409,
+                detail=f"运单号已被其他出库批次或进库使用: {tracking}",
+            )
 
 
 def _payment_status(receivable: Optional[float], received: float) -> str:
@@ -71,6 +102,30 @@ def _compute_freight_cny(
     if rate <= 0:
         return None
     return round(float(unit_price) * float(weight) * float(rate), 2)
+
+
+def _parse_freight_jpy(box: dict[str, Any]) -> Optional[float]:
+    if "freight_jpy" not in box:
+        return None
+    raw = box.get("freight_jpy")
+    if raw is None or raw == "":
+        return None
+    val = _as_float(raw)
+    if val is None or val < 0:
+        raise HTTPException(status_code=400, detail="freight_jpy must be >= 0")
+    return val
+
+
+def _freight_cny_from_boxes(
+    boxes: list[dict[str, Any]],
+    unit_price: Optional[float],
+    weight: Optional[float],
+    rate: Optional[float],
+) -> Optional[float]:
+    amounts = [b.get("freight_jpy") for b in boxes]
+    if amounts and all(v is not None for v in amounts) and rate is not None and rate > 0:
+        return round(sum(float(v) for v in amounts) * float(rate), 2)
+    return _compute_freight_cny(unit_price, weight, rate)
 
 
 def _recompute_batch_totals(
@@ -105,6 +160,7 @@ def _box_out(conn, shipment_id: int) -> dict[str, Any]:
         "length_cm": _as_float(ship.get("length_cm")),
         "width_cm": _as_float(ship.get("width_cm")),
         "height_cm": _as_float(ship.get("height_cm")),
+        "freight_jpy": _as_float(ship.get("freight_jpy")),
         "items": ship["items"],
         "order_groups": ship["order_groups"],
     }
@@ -114,8 +170,7 @@ def _batch_out(conn, batch_id: int) -> dict[str, Any]:
     batch = conn.execute(
         "SELECT * FROM outbound_batches WHERE id = ?", (batch_id,)
     ).fetchone()
-    if not batch:
-        raise HTTPException(status_code=404, detail="outbound batch not found")
+    ensure_visible(batch, "outbound batch not found")
     boxes = conn.execute(
         """
         SELECT id FROM shipments
@@ -163,9 +218,10 @@ def _batch_out(conn, batch_id: int) -> dict[str, Any]:
 def list_batches(limit: int = 50) -> list[dict[str, Any]]:
     limit = max(1, min(limit, 200))
     with get_conn() as conn:
+        wh_sql, wh_params = warehouse_and("warehouse_id")
         rows = conn.execute(
-            "SELECT id FROM outbound_batches ORDER BY id DESC LIMIT ?",
-            (limit,),
+            f"SELECT id FROM outbound_batches WHERE 1=1{wh_sql} ORDER BY id DESC LIMIT ?",
+            (*wh_params, limit),
         ).fetchall()
         return [_batch_out(conn, r["id"]) for r in rows]
 
@@ -286,7 +342,7 @@ def create_batch(
     normalized: list[dict[str, Any]] = []
     seen_items: set[int] = set()
     used_box_nos: set[int] = set()
-    batch_tracking = _require_shared_batch_tracking(boxes)
+    box_trackings = _require_each_box_tracking(boxes)
 
     for i, box in enumerate(boxes, start=1):
         ids = list(box.get("item_ids") or [])
@@ -319,7 +375,7 @@ def create_batch(
             {
                 "box_no": box_no,
                 "carrier": carrier,
-                "tracking_no": batch_tracking,
+                "tracking_no": box_trackings[i - 1],
                 "note": (box.get("note") or "").strip(),
                 "item_ids": unique,
                 "net_weight": _as_float(box.get("net_weight")),
@@ -327,19 +383,12 @@ def create_batch(
                 "length_cm": _as_float(box.get("length_cm")),
                 "width_cm": _as_float(box.get("width_cm")),
                 "height_cm": _as_float(box.get("height_cm")),
+                "freight_jpy": _parse_freight_jpy(box),
             }
         )
 
     with get_conn() as conn:
-        exists = conn.execute(
-            "SELECT id FROM shipments WHERE tracking_no = ?",
-            (batch_tracking,),
-        ).fetchone()
-        if exists:
-            raise HTTPException(
-                status_code=409,
-                detail=f"运单号已被其他出库批次或进库使用: {batch_tracking}",
-            )
+        _assert_trackings_free(conn, box_trackings)
 
         placeholders = ",".join("?" * len(seen_items))
         rows = conn.execute(
@@ -438,7 +487,9 @@ def create_batch(
         freight_weight = (
             float(chargeable_weight) if chargeable_weight is not None else None
         )
-        freight_cny = _compute_freight_cny(freight_unit, freight_weight, freight_rate)
+        freight_cny = _freight_cny_from_boxes(
+            normalized, freight_unit, freight_weight, freight_rate
+        )
         receivable, pay_status, _ = _recompute_batch_totals(
             locked["goods_receivable_cny"], freight_cny, 0.0
         )
@@ -450,8 +501,8 @@ def create_batch(
                 goods_jpy, order_shipping_jpy, goods_receivable_cny,
                 freight_exchange_rate, freight_unit_price_jpy, chargeable_weight,
                 freight_cny, amount_receivable_cny, amount_received_cny,
-                payment_status, payment_note, invoice_ship_date
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?)
+                payment_status, payment_note, invoice_ship_date, warehouse_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, '', ?, ?)
             """,
             (
                 batch_note,
@@ -466,13 +517,20 @@ def create_batch(
                 receivable,
                 pay_status,
                 (invoice_ship_date or "").strip() or None,
+                stamp_warehouse_id(conn),
             ),
         )
         batch_id = int(cur.lastrowid)
         shipment_ids: list[int] = []
         item_restores: list[dict[str, Any]] = []
         order_restores = {
-            oid: conn.execute(
+            oid: ensure_visible(
+                conn.execute(
+                    "SELECT status, warehouse_id FROM orders WHERE id = ?", (oid,)
+                ).fetchone(),
+                "order not found",
+            )
+            or conn.execute(
                 "SELECT status FROM orders WHERE id = ?", (oid,)
             ).fetchone()["status"]
             for oid in order_ids
@@ -484,8 +542,9 @@ def create_batch(
                 INSERT INTO shipments (
                     direction, carrier, tracking_no, shipped_at, status,
                     batch_id, box_no, note,
-                    net_weight, gross_weight, length_cm, width_cm, height_cm
-                ) VALUES ('outbound', ?, ?, ?, 'shipped', ?, ?, ?, ?, ?, ?, ?, ?)
+                    net_weight, gross_weight, length_cm, width_cm, height_cm,
+                    freight_jpy
+                ) VALUES ('outbound', ?, ?, ?, 'shipped', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     box["carrier"],
@@ -499,6 +558,7 @@ def create_batch(
                     box.get("length_cm"),
                     box.get("width_cm"),
                     box.get("height_cm"),
+                    box.get("freight_jpy"),
                 ),
             )
             shipment_id = int(scur.lastrowid)
@@ -555,8 +615,7 @@ def update_finance(batch_id: int, payload: dict[str, Any]) -> dict[str, Any]:
         batch = conn.execute(
             "SELECT * FROM outbound_batches WHERE id = ?", (batch_id,)
         ).fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="outbound batch not found")
+        ensure_visible(batch, "outbound batch not found")
 
         freight_rate = (
             float(data["freight_exchange_rate"])
@@ -584,7 +643,20 @@ def update_finance(batch_id: int, payload: dict[str, Any]) -> dict[str, Any]:
             if value is not None and value < 0:
                 raise HTTPException(status_code=400, detail=f"{label} invalid")
 
-        freight_cny = _compute_freight_cny(freight_unit, freight_weight, freight_rate)
+        box_rows = conn.execute(
+            """
+            SELECT box_no, freight_jpy FROM shipments
+            WHERE batch_id = ? AND direction = 'outbound'
+            ORDER BY box_no, id
+            """,
+            (batch_id,),
+        ).fetchall()
+        freight_cny = _freight_cny_from_boxes(
+            [{"freight_jpy": _as_float(r["freight_jpy"])} for r in box_rows],
+            freight_unit,
+            freight_weight,
+            freight_rate,
+        )
         goods_cny = _as_float(batch["goods_receivable_cny"])
         received = (
             float(data["amount_received_cny"])
@@ -684,7 +756,7 @@ def update_batch(
     seen_items: set[int] = set()
     qty_by_item: dict[int, int] = {}
     used_box_nos: set[int] = set()
-    batch_tracking = _require_shared_batch_tracking(boxes)
+    box_trackings = _require_each_box_tracking(boxes)
 
     for i, box in enumerate(boxes, start=1):
         raw_items = list(box.get("items") or [])
@@ -728,7 +800,7 @@ def update_batch(
             {
                 "box_no": box_no,
                 "carrier": carrier,
-                "tracking_no": batch_tracking,
+                "tracking_no": box_trackings[i - 1],
                 "note": (box.get("note") or "").strip(),
                 "item_ids": item_ids,
                 "net_weight": _as_float(box.get("net_weight")),
@@ -736,6 +808,8 @@ def update_batch(
                 "length_cm": _as_float(box.get("length_cm")),
                 "width_cm": _as_float(box.get("width_cm")),
                 "height_cm": _as_float(box.get("height_cm")),
+                "freight_jpy": _parse_freight_jpy(box),
+                "freight_jpy_set": "freight_jpy" in box,
             }
         )
 
@@ -743,12 +817,11 @@ def update_batch(
         batch = conn.execute(
             "SELECT * FROM outbound_batches WHERE id = ?", (batch_id,)
         ).fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="outbound batch not found")
+        ensure_visible(batch, "outbound batch not found")
 
         ships = conn.execute(
             """
-            SELECT id, status, tracking_no FROM shipments
+            SELECT id, status, tracking_no, box_no, freight_jpy FROM shipments
             WHERE batch_id = ? AND direction = 'outbound'
             """,
             (batch_id,),
@@ -760,6 +833,14 @@ def update_batch(
                 status_code=400,
                 detail="已有箱子签收，不能再编辑该批次",
             )
+        old_freight_by_box = {
+            int(s["box_no"]): _as_float(s["freight_jpy"])
+            for s in ships
+            if s["box_no"] is not None
+        }
+        for box in normalized:
+            if not box.get("freight_jpy_set"):
+                box["freight_jpy"] = old_freight_by_box.get(int(box["box_no"]))
 
         old_rows = conn.execute(
             """
@@ -774,19 +855,7 @@ def update_batch(
         old_item_ids = {int(r["item_id"]) for r in old_rows}
         old_order_ids = {int(r["order_id"]) for r in old_rows if r["order_id"]}
 
-        exists = conn.execute(
-            """
-            SELECT id FROM shipments
-            WHERE tracking_no = ?
-              AND NOT (batch_id = ? AND direction = 'outbound')
-            """,
-            (batch_tracking, batch_id),
-        ).fetchone()
-        if exists:
-            raise HTTPException(
-                status_code=409,
-                detail=f"运单号已被其他出库批次或进库使用: {batch_tracking}",
-            )
+        _assert_trackings_free(conn, box_trackings, exclude_batch_id=batch_id)
 
         placeholders = ",".join("?" * len(seen_items))
         rows = conn.execute(
@@ -892,8 +961,9 @@ def update_batch(
                 INSERT INTO shipments (
                     direction, carrier, tracking_no, shipped_at, status,
                     batch_id, box_no, note,
-                    net_weight, gross_weight, length_cm, width_cm, height_cm
-                ) VALUES ('outbound', ?, ?, ?, 'shipped', ?, ?, ?, ?, ?, ?, ?, ?)
+                    net_weight, gross_weight, length_cm, width_cm, height_cm,
+                    freight_jpy
+                ) VALUES ('outbound', ?, ?, ?, 'shipped', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     box["carrier"],
@@ -907,6 +977,7 @@ def update_batch(
                     box.get("length_cm"),
                     box.get("width_cm"),
                     box.get("height_cm"),
+                    box.get("freight_jpy"),
                 ),
             )
             shipment_id = int(scur.lastrowid)
@@ -927,7 +998,9 @@ def update_batch(
         freight_rate = _as_float(batch["freight_exchange_rate"])
         freight_unit = _as_float(batch["freight_unit_price_jpy"])
         freight_weight = _as_float(batch["chargeable_weight"])
-        freight_cny = _compute_freight_cny(freight_unit, freight_weight, freight_rate)
+        freight_cny = _freight_cny_from_boxes(
+            normalized, freight_unit, freight_weight, freight_rate
+        )
         received = _as_float(batch["amount_received_cny"]) or 0.0
         receivable, pay_status, _ = _recompute_batch_totals(
             locked["goods_receivable_cny"], freight_cny, received
@@ -994,10 +1067,9 @@ def confirm_batch(batch_id: int) -> dict[str, Any]:
     """Confirm all shipped boxes in a batch as delivered (user signed)."""
     with get_conn() as conn:
         batch = conn.execute(
-            "SELECT id FROM outbound_batches WHERE id = ?", (batch_id,)
+            "SELECT id, warehouse_id FROM outbound_batches WHERE id = ?", (batch_id,)
         ).fetchone()
-        if not batch:
-            raise HTTPException(status_code=404, detail="outbound batch not found")
+        ensure_visible(batch, "outbound batch not found")
         ships = conn.execute(
             """
             SELECT id FROM shipments
@@ -1421,3 +1493,110 @@ def export_inv_preview_xlsx(payload: dict[str, Any]) -> tuple[bytes, str]:
             packing_lines=packing_lines,
         )
         return content, filename
+
+
+# ============================================================
+# FEATURE: SF_EXPORT
+# [业务逻辑] export_sf_xlsx / export_sf_preview_xlsx
+# [接口] GET .../sf.xlsx  POST .../preview-sf.xlsx
+# ============================================================
+def export_sf_xlsx(batch_id: int) -> tuple[bytes, str]:
+    """Export SF declaration sheet. Returns (bytes, filename)."""
+    from app.services.sf_template import (
+        build_sf_workbook,
+        format_ship_box_no,
+        parse_ship_date,
+    )
+
+    with get_conn() as conn:
+        batch = _batch_out(conn, batch_id)
+        product_lines: list[dict[str, Any]] = []
+        for box in batch["boxes"]:
+            box_no = int(box.get("box_no") or 0)
+            ship_box = format_ship_box_no(batch_id, box_no)
+            for item in box["items"]:
+                item_row = conn.execute(
+                    """
+                    SELECT i.barcode, i.qty, i.unit_cost, i.name, i.ip
+                    FROM items i WHERE i.id = ?
+                    """,
+                    (item["id"],),
+                ).fetchone()
+                if not item_row:
+                    continue
+                product_lines.append(
+                    {
+                        "ship_box_no": ship_box,
+                        "barcode": item_row["barcode"] or "",
+                        "name_cn": item_row["name"] or "",
+                        "brand": (item_row["ip"] or "").strip(),
+                        "qty": int(item_row["qty"] or item.get("qty") or 0),
+                        "unit_price": _as_float(item_row["unit_cost"]),
+                    }
+                )
+        ship_date = parse_ship_date(batch.get("invoice_ship_date"))
+        return build_sf_workbook(
+            batch_id=batch_id,
+            ship_date=ship_date,
+            product_lines=product_lines,
+        )
+
+
+def export_sf_preview_xlsx(payload: dict[str, Any]) -> tuple[bytes, str]:
+    """Draft SF preview using batch_id=0 in filename."""
+    from app.services.sf_template import (
+        build_sf_workbook,
+        format_ship_box_no,
+        parse_ship_date,
+    )
+
+    boxes = list(payload.get("boxes") or [])
+    if not boxes:
+        raise HTTPException(status_code=400, detail="boxes required")
+    item_ids: list[int] = []
+    box_for_item: dict[int, str] = {}
+    for i, box in enumerate(boxes, start=1):
+        ids = [int(x) for x in (box.get("item_ids") or [])]
+        if not ids:
+            raise HTTPException(status_code=400, detail=f"第{i}箱没有明细行")
+        box_no = int(box.get("box_no") or i)
+        ship_box = format_ship_box_no(0, box_no)
+        for iid in ids:
+            item_ids.append(iid)
+            box_for_item[iid] = ship_box
+    if len(set(item_ids)) != len(item_ids):
+        raise HTTPException(status_code=400, detail="明细行不能重复分箱")
+
+    with get_conn() as conn:
+        placeholders = ",".join("?" * len(item_ids))
+        rows = conn.execute(
+            f"""
+            SELECT id, barcode, qty, unit_cost, name, ip
+            FROM items WHERE id IN ({placeholders})
+            """,
+            item_ids,
+        ).fetchall()
+        by_id = {int(r["id"]): r for r in rows}
+        if len(by_id) != len(set(item_ids)):
+            missing = [iid for iid in set(item_ids) if iid not in by_id]
+            raise HTTPException(status_code=404, detail=f"items not found: {missing}")
+
+        product_lines: list[dict[str, Any]] = []
+        for iid in item_ids:
+            row = by_id[int(iid)]
+            product_lines.append(
+                {
+                    "ship_box_no": box_for_item[int(iid)],
+                    "barcode": row["barcode"] or "",
+                    "name_cn": row["name"] or "",
+                    "brand": (row["ip"] or "").strip(),
+                    "qty": int(row["qty"] or 0),
+                    "unit_price": _as_float(row["unit_cost"]),
+                }
+            )
+        ship_date = parse_ship_date(payload.get("invoice_ship_date"))
+        return build_sf_workbook(
+            batch_id=0,
+            ship_date=ship_date,
+            product_lines=product_lines,
+        )

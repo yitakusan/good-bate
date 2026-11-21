@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Stockgood 订单抓取",
+  "version": "0.13.0",
+  "description": "把当前订单页交给本机 Stockgood 解析。不记录到货地址。",
+  "permissions": ["activeTab", "scripting", "nativeMessaging"],
+  "host_permissions": [
+    "http://127.0.0.1:8002/*",
+    "http://localhost:8002/*"
+  ],
+  "action": {
+    "default_title": "解析当前订单",
+    "default_popup": "popup.html"
+  }
+}

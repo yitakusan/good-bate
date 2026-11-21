@@ -11,6 +11,10 @@ export interface ActionLogOut {
   actor_user_id: number | null;
 }
 
+export interface Body_parse_retailer_cart_template_api_retailer_cart_parse_post {
+  file: string;
+}
+
 export interface ChangePasswordIn {
   password: string;
 }
@@ -378,6 +382,7 @@ export interface OutboundBoxCreate {
   tracking_no: string;
   note?: string;
   item_ids: Array<number>;
+  freight_jpy?: number | null;
   net_weight?: number | null;
   gross_weight?: number | null;
   length_cm?: number | null;
@@ -406,6 +411,7 @@ export interface OutboundBoxOut {
   length_cm: number | null;
   width_cm: number | null;
   height_cm: number | null;
+  freight_jpy: number | null;
   items: Array<ShipmentItemOut>;
   order_groups: Array<OrderGroupOut>;
 }
@@ -416,6 +422,7 @@ export interface OutboundBoxUpdate {
   tracking_no: string;
   note?: string;
   items: Array<OutboundBoxItemUpdate>;
+  freight_jpy?: number | null;
   net_weight?: number | null;
   gross_weight?: number | null;
   length_cm?: number | null;
@@ -436,6 +443,60 @@ export interface RegisterCustomerIn {
   email: string;
   password: string;
   display_name?: string;
+}
+
+export interface RetailerCartAddRequest {
+  items: Array<RetailerCartLine>;
+}
+
+export interface RetailerCartAddResult {
+  cart_url: string;
+  carts: Array<RetailerCartShopCart>;
+  message: string;
+  items: Array<RetailerCartLine>;
+}
+
+export interface RetailerCartLine {
+  source_url: string;
+  qty: number;
+  product_id: string;
+  shop: string;
+  skip_reason: string;
+  variant_id: string;
+  name: string;
+  image_url: string;
+  unit_cost: number | null;
+}
+
+export interface RetailerCartParseResult {
+  eligible: Array<RetailerCartLine>;
+  skipped: Array<RetailerCartLine>;
+  allowed_hosts: Array<string>;
+  shops: Array<RetailerCartShop>;
+  message: string;
+}
+
+export interface RetailerCartPost {
+  action: string;
+  fields: Record<string, unknown>;
+}
+
+export interface RetailerCartShop {
+  host: string;
+  label: string;
+  kind: string;
+  tax: string;
+}
+
+export interface RetailerCartShopCart {
+  shop: string;
+  label: string;
+  kind: string;
+  cart_url: string;
+  cart_urls: Array<string>;
+  method: string;
+  posts: Array<RetailerCartPost>;
+  items: Array<RetailerCartLine>;
 }
 
 export interface ScrapeProduct {
