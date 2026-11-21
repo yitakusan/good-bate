@@ -1,6 +1,6 @@
 # Stockgood AI Handoff
 
-新会话的第一份地图. 日期: 2026-10-14. 产品版本: **0.10.4**.
+新会话的第一份地图. 原地图日期: 2026-10-14. 产品版本: **0.13.1**; 较新修改以 `docs/CHANGELOG_AI.md` 和实际代码为准.
 
 本文件只记决策和路径. 细节以 `docs/CODE_INDEX.md` 的单个 FEATURE 为准, 原因以 `docs/CHANGELOG_AI.md` 为准. 不要把这里的摘要当成比代码更新的事实.
 
@@ -29,7 +29,7 @@ Effort 规则在 `AGENTS.md`. 单 FEATURE 常规改动用 Medium 或 High. 不�
 
 | 项 | 值 |
 |---|---|
-| 版本 | `0.10.4`, 落点: `VERSION`, `backend/app/main.py` 的 `APP_VERSION`, `frontend/package.json` |
+| 版本 | `0.13.1`, 落点: `VERSION`, `backend/app/main.py` 的 `APP_VERSION`, `frontend/package.json` |
 | 界面 | http://localhost:5174 |
 | API | http://localhost:8002 , 文档 http://localhost:8002/docs |
 | 生产库 | `backend/data/stockgood.sqlite` (`STOCKGOOD_DB_MODE=production`, `start.bat` 默认) |
@@ -87,6 +87,8 @@ cd backend
 数量统计只在「库存」分区显示. 角色: `users` 仅 `admin`. `finance` 角色看不到抓取导入, 模板加购, 进库, 库存, 出库. 员工登录当前关掉时, 未登录也能进员工 API (见第 6 节).
 
 ### 员工端 `NAV_SECTIONS` (`frontend/src/App.tsx`)
+
+0.13.1 起员工端使用侧边分区导航, 各分区 Tab 可直接访问; 入口及角色筛选仍由 `NAV_SECTIONS` / `tabAllowed` 控制. 员工界面样式在 `frontend/src/staff-ui.css`, 限定于 `.app`.
 
 | 分区 id | 标签 | 页面 (tab) | 主要文件 |
 |---|---|---|---|

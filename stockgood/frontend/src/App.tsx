@@ -102,6 +102,7 @@ import {
   updateStockBox,
 } from "./api";
 import { batchScrapeDelayMs, waitForBatchScrape } from "./scrapeDelay";
+import "./staff-ui.css";
 
 type Tab =
   | "orders"
@@ -160,6 +161,20 @@ const NAV_SECTIONS: {
     ],
   },
 ];
+
+const NAV_ICONS: Record<Tab, string> = {
+  scrape: "⌕",
+  "retailer-cart": "▣",
+  inbound: "⇥",
+  orders: "▤",
+  inventory: "▧",
+  outbound: "⇤",
+  requests: "♧",
+  finance: "◫",
+  reports: "▥",
+  logs: "≡",
+  users: "♙",
+};
 
 function tabAllowed(key: Tab, role: string | undefined): boolean {
   if (key === "users") return role === "admin";
@@ -2932,6 +2947,15 @@ function retailerCartCopyText(cart: RetailerCartShopCart): string {
             </div>
           </div>
         </div>
+        <div className="workspace-heading">
+          <p className="workspace-kicker">工作空间</p>
+          <h2>
+            {NAV_SECTIONS.flatMap((section) => section.items).find(([key]) => key === tab)?.[1] || "库存"}
+          </h2>
+          <p>
+            {NAV_SECTIONS.find((section) => section.items.some(([key]) => key === tab))?.hint}
+          </p>
+        </div>
         {stats &&
         NAV_SECTIONS.find((section) =>
           section.items.some(([key]) => key === tab),
@@ -3030,6 +3054,13 @@ function retailerCartCopyText(cart: RetailerCartShopCart): string {
       ) : null}
 
       <nav className="app-nav" aria-label="功能分区">
+        <div className="staff-nav-brand">
+          <span className="staff-nav-mark" aria-hidden="true">S</span>
+          <span>
+            <strong>stockgood</strong>
+            <small>INVENTORY WORKSPACE</small>
+          </span>
+        </div>
         {(() => {
           const role = authUser?.role;
           const sections = NAV_SECTIONS.map((section) => ({
@@ -3055,36 +3086,36 @@ function retailerCartCopyText(cart: RetailerCartShopCart): string {
             <>
               <div className="nav-sections">
                 {sections.map((section) => (
-                  <button
-                    type="button"
-                    key={section.id}
-                    className={section.id === current.id ? "active" : ""}
-                    onClick={() => {
-                      if (section.items.some(([key]) => key === tab)) return;
-                      switchTab(section.items[0][0]);
-                    }}
-                  >
-                    {section.label}
-                  </button>
+                  <div className="staff-nav-group" key={section.id}>
+                    <button
+                      type="button"
+                      className={section.id === current.id ? "active" : ""}
+                      onClick={() => {
+                        if (section.items.some(([key]) => key === tab)) return;
+                        switchTab(section.items[0][0]);
+                      }}
+                    >
+                      {section.label}
+                    </button>
+                    <div className="nav-steps">
+                      {section.items.map(([key, label]) => (
+                        <span className="nav-step" key={key}>
+                          <button
+                            type="button"
+                            className={tab === key ? "active" : ""}
+                            aria-current={tab === key ? "page" : undefined}
+                            onClick={() => switchTab(key)}
+                          >
+                            <span className="staff-nav-icon" aria-hidden="true">{NAV_ICONS[key]}</span>
+                            {label}
+                          </button>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
               <p className="nav-hint">{current.hint}</p>
-              {current.items.length > 1 ? (
-                <div className="nav-steps">
-                  {current.items.map(([key, label], index) => (
-                    <span className="nav-step" key={key}>
-                      {index > 0 ? <span className="nav-arrow" aria-hidden>→</span> : null}
-                      <button
-                        type="button"
-                        className={tab === key ? "active" : ""}
-                        onClick={() => switchTab(key)}
-                      >
-                        {label}
-                      </button>
-                    </span>
-                  ))}
-                </div>
-              ) : null}
             </>
           );
         })()}

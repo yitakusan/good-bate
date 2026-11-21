@@ -90,7 +90,8 @@ deploy/            Docker / systemd
 
 | 目录 / 文件 | 用途 |
 |---|---|
-| `frontend/src/App.tsx` | 员工主界面（多 Tab，无独立出库页文件） |
+| `frontend/src/App.tsx` | 员工主界面（侧边分区导航、多 Tab，无独立出库页文件） |
+| `frontend/src/staff-ui.css` | 员工后台护眼配色、侧边导航与响应式样式 |
 | `frontend/src/ApplyPage.tsx` | 顾客申请 `/apply` |
 | `frontend/src/MePage.tsx` | 客户门户 `/me` |
 | `frontend/src/api.ts` | 前端全部 HTTP 封装 |

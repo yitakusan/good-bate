@@ -1,0 +1,502 @@
+/*
+ * Staff workspace presentation. All selectors are scoped to .app so /apply
+ * and /me continue to use their existing styles and shared components.
+ */
+.app {
+  --bg: #e7eee9;
+  --bg-panel: #eef5ed;
+  --bg-row: #eaf3e9;
+  --bg-row-alt: #e3eee4;
+  --ink: #203b30;
+  --muted: #526f5d;
+  --line: #c3d6c8;
+  --accent: #286e53;
+  --accent-soft: #75a98a;
+  --accent-ink: #f4faf5;
+  --table-head-bg: #dceade;
+  --table-head-ink: #355b45;
+  --radius-panel: 14px;
+  --radius-btn: 9px;
+  max-width: none;
+  min-height: 100vh;
+  margin: 0;
+  padding: 24px 36px 56px 262px;
+  background: var(--bg);
+  color: var(--ink);
+}
+
+.app > :not(.app-nav) {
+  max-width: 1530px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.app .app-nav {
+  position: fixed;
+  inset: 0 auto 0 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  width: 226px;
+  margin: 0;
+  padding: 26px 16px;
+  overflow-y: auto;
+  background: #e5eee5;
+  border-right: 1px solid #c6d9ca;
+}
+
+.app .staff-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 6px;
+}
+
+.app .staff-nav-brand strong,
+.app .staff-nav-brand small {
+  display: block;
+}
+
+.app .staff-nav-brand strong {
+  font-size: 1.2rem;
+  letter-spacing: -0.04em;
+}
+
+.app .staff-nav-brand small {
+  margin-top: 2px;
+  color: #536e5e;
+  font-size: 0.63rem;
+  letter-spacing: 0.07em;
+}
+
+.app .staff-nav-mark {
+  display: grid;
+  flex: 0 0 38px;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border-radius: 12px;
+  background: #286e53;
+  color: #f4faf5;
+  font-size: 1.25rem;
+  font-weight: 800;
+}
+
+.app .nav-sections {
+  display: grid;
+  gap: 18px;
+}
+
+.app .staff-nav-group > button {
+  width: 100%;
+  padding: 2px 10px 7px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #597665;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: left;
+}
+
+.app .staff-nav-group > button.active {
+  background: transparent;
+  color: #315e46;
+}
+
+.app .staff-nav-group > button:hover {
+  text-decoration: underline;
+}
+
+.app .nav-steps {
+  display: grid;
+  gap: 3px;
+}
+
+.app .nav-step {
+  display: block;
+}
+
+.app .nav-steps button {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  width: 100%;
+  min-height: 38px;
+  padding: 8px 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: #3e5f4c;
+  font-size: 0.9rem;
+  text-align: left;
+}
+
+.app .nav-steps button:hover {
+  background: #dcebe0;
+}
+
+.app .nav-steps button.active {
+  border-color: #c8dfcf;
+  background: #d6eadd;
+  color: #1b6044;
+  font-weight: 700;
+}
+
+.app .staff-nav-icon {
+  width: 17px;
+  flex: 0 0 17px;
+  font-size: 1.05rem;
+  line-height: 1;
+  text-align: center;
+  opacity: 0.75;
+}
+
+.app .nav-hint {
+  margin: auto 4px 0;
+  padding: 12px;
+  border: 1px solid #cbded0;
+  border-radius: 10px;
+  background: #e0ece1;
+  color: #4c6c58;
+  font-size: 0.78rem;
+  line-height: 1.55;
+}
+
+.app .top {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 24px;
+  margin-bottom: 22px;
+}
+
+.app .brand {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 18px;
+  padding: 13px 17px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #e5eee5;
+}
+
+.app .brand h1 {
+  margin: 0;
+  color: #254a38;
+  font-size: 1rem;
+  letter-spacing: 0;
+}
+
+.app .brand .brand-flow {
+  margin: 0;
+  color: #5b7564;
+  font-size: 0.83rem;
+}
+
+.app .warehouse-switch {
+  flex-wrap: wrap;
+  margin: 0 0 0 auto;
+}
+
+.app .tunnel-panel {
+  margin: 0;
+}
+
+.app .tunnel-badge,
+.app .tunnel-apply-row {
+  background: #eaf3e9;
+}
+
+.app .workspace-heading {
+  padding: 4px 2px 0;
+}
+
+.app .workspace-heading .workspace-kicker {
+  margin: 0 0 7px;
+  color: #367653;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.app .workspace-heading h2 {
+  margin: 0;
+  color: #203e30;
+  font-size: 1.7rem;
+  letter-spacing: -0.03em;
+}
+
+.app .workspace-heading > p:last-child {
+  margin: 8px 0 0;
+  color: #526f5d;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.app .stats {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.app .stat {
+  display: flex;
+  flex-direction: column-reverse;
+  justify-content: flex-end;
+  gap: 12px;
+  min-width: 0;
+  min-height: 104px;
+  padding: 17px 18px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--bg-panel);
+  box-shadow: 0 4px 16px rgba(36, 67, 46, 0.05);
+}
+
+.app .stat:nth-child(3) {
+  border-color: #a9cdb3;
+  background: #e7f2e8;
+}
+
+.app .stat b {
+  color: #28513b;
+  font-size: 1.6rem;
+  line-height: 1.1;
+}
+
+.app .stat:nth-child(3) b {
+  color: #287b53;
+}
+
+.app .stat span {
+  color: #526f5d;
+  font-size: 0.85rem;
+  white-space: normal;
+}
+
+.app .panel {
+  min-width: 0;
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--bg-panel);
+  box-shadow: 0 5px 20px rgba(36, 67, 46, 0.06);
+}
+
+.app .toolbar h2,
+.app .panel > h2 {
+  color: #254735;
+}
+
+.app :where(input:not([type="checkbox"]):not([type="radio"]):not([type="file"]), select, textarea) {
+  background-color: var(--bg-row);
+  color: var(--ink);
+}
+
+.app .toolbar input,
+.app .toolbar select,
+.app .form-grid input,
+.app .form-grid select,
+.app .form-grid textarea,
+.app .scrape-bar input,
+.app .scrape-bar textarea,
+.app .warehouse-switch select,
+.app .warehouse-create input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg-row);
+  color: var(--ink);
+}
+
+.app .btn {
+  border-color: #bdd2c2;
+  background: #e7f1e7;
+  color: #345744;
+  font-weight: 600;
+}
+
+.app .btn:hover:not(:disabled) {
+  border-color: #8eb79a;
+  background: #dcebdd;
+}
+
+.app .btn.btn-primary,
+.app .btn.primary {
+  border-color: #286e53;
+  background: #286e53;
+  color: #f4faf5;
+}
+
+.app .btn.btn-primary:hover:not(:disabled),
+.app .btn.primary:hover:not(:disabled) {
+  background: #205d45;
+}
+
+.app .btn.btn-danger {
+  border-color: #d8b1a9;
+  background: #f0ded8;
+  color: #763d34;
+}
+
+.app .btn.btn-danger:hover:not(:disabled) {
+  background: #ead1c8;
+}
+
+.app .table-wrap,
+.app .order-table,
+.app .item-pick,
+.app .undo-banner {
+  border-radius: 10px;
+}
+
+.app th {
+  background: #dceade;
+  color: #355b45;
+}
+
+.app td {
+  border-color: #ceded1;
+}
+
+.app .order-table-head {
+  border-bottom: 1px solid #b4cebb;
+  background: #dceade;
+}
+
+.app .order-row-main {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.app .order-preview {
+  border-radius: 8px;
+}
+
+.app :is(button, input, select, textarea, a):focus-visible {
+  outline: 3px solid #38865e;
+  outline-offset: 2px;
+}
+
+.app .shadow-banner {
+  margin: 0 auto 16px;
+  border: 1px solid #b0ccb6;
+  border-radius: 9px;
+  background: #d6e8d8;
+}
+
+/* The sidebar takes width from the order list on medium-sized screens. */
+@media (min-width: 1101px) and (max-width: 1400px) {
+  .app .order-table {
+    overflow-x: auto;
+  }
+
+  .app .order-table-head,
+  .app .order-row {
+    min-width: 1020px;
+  }
+}
+
+@media (max-width: 900px) {
+  .app {
+    padding: 16px 16px 40px;
+  }
+
+  .app .app-nav {
+    position: static;
+    width: auto;
+    margin: 0 0 18px;
+    padding: 14px;
+    overflow: visible;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  .app .staff-nav-brand {
+    display: none;
+  }
+
+  .app .nav-sections {
+    display: flex;
+    gap: 16px;
+    overflow-x: auto;
+    padding-bottom: 4px;
+  }
+
+  .app .staff-nav-group {
+    flex: 0 0 auto;
+  }
+
+  .app .nav-steps {
+    display: flex;
+    flex-wrap: nowrap;
+  }
+
+  .app .nav-steps button {
+    width: auto;
+    white-space: nowrap;
+  }
+
+  .app .nav-hint {
+    display: none;
+  }
+
+  .app .warehouse-switch {
+    margin-left: 0;
+  }
+
+  .app .stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .app {
+    padding: 12px 10px calc(24px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .app .top {
+    gap: 16px;
+  }
+
+  .app .brand {
+    align-items: flex-start;
+    padding: 12px;
+  }
+
+  .app .brand .brand-flow {
+    display: none;
+  }
+
+  .app .workspace-heading h2 {
+    font-size: 1.4rem;
+  }
+
+  .app .stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .app .stat {
+    min-height: 86px;
+    padding: 12px;
+    text-align: left;
+  }
+
+  .app .stat b {
+    font-size: 1.35rem;
+  }
+
+  .app .stat span {
+    font-size: 0.83rem;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
+  .app .panel {
+    padding: 14px;
+  }
+}

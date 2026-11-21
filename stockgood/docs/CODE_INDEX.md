@@ -947,6 +947,8 @@ Cookie 会话登录、登出、当前用户、客户自助注册。可选环境�
 | `backend/app/models.py` | Pydantic 请求/响应 | 全部 API |
 | `frontend/src/api-types.generated.ts` | OpenAPI 生成的 TS 类型 | `api.ts` |
 | `frontend/src/api.ts` | 浏览器 `fetch` 封装（类型引用生成文件） | 全部前端 |
+| `frontend/src/staff-ui.css` | 员工主界面侧边导航、护眼配色和响应式样式（限定 `.app`） | 员工端各 Tab |
+| `frontend/src/styles.css` | 全局共享基础样式与客户页面样式 | 全部前端 |
 | `backend/app/settings.py` | 环境变量、库模式、CORS | SYSTEM / AUTH |
 | `backend/app/services/order_status.py` | 订单状态由明细汇总 | ORDER / INBOUND / OUTBOUND |
 | `backend/app/tracking_links.py` | 承运商查询 URL | INBOUND / OUTBOUND |
